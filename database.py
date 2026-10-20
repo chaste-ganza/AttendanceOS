@@ -1,7 +1,7 @@
 """
 database.py — Database schema definition and connection management.
 
-Prototype schema — 6 tables:
+Schema:
 
     classes
     students          (rfid_uid stored directly here, nullable)
@@ -9,6 +9,8 @@ Prototype schema — 6 tables:
     subjects
     attendance_sessions
     attendance
+    timetable_slots
+    password_reset_tokens
 
 Nothing runs on import. All initialization is explicit.
 Call initialize_database() at application startup.
@@ -21,7 +23,7 @@ import os
 # Configuration
 # ---------------------------------------------------------------------------
 
-DATABASE = "attendance.db"
+DATABASE = os.environ.get("DATABASE_PATH", "attendance.db")
 
 # Valid session states.
 SESSION_STATES = ("SCHEDULED", "OPEN", "CLOSED", "COMPLETED")
@@ -137,6 +139,25 @@ def create_tables(conn):
     """)
 
     # ------------------------------------------------------------------
+    # timetable_slots
+    # ------------------------------------------------------------------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS timetable_slots (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            day_of_week TEXT    NOT NULL CHECK (day_of_week IN
+                            ('monday', 'tuesday', 'wednesday', 'thursday', 'friday')),
+            class_id    INTEGER NOT NULL REFERENCES classes(id),
+            subject_id  INTEGER NOT NULL REFERENCES subjects(id),
+            teacher_id  INTEGER REFERENCES teachers(id),
+            room        TEXT,
+            start_time  TEXT    NOT NULL,
+            end_time    TEXT    NOT NULL,
+            accent      TEXT    NOT NULL DEFAULT 'indigo',
+            created_at  TEXT    NOT NULL
+        )
+    """)
+
+    # ------------------------------------------------------------------
     # attendance_sessions
     # ------------------------------------------------------------------
     # One session = one teacher taking attendance for one class/subject
@@ -155,9 +176,11 @@ def create_tables(conn):
             class_id     INTEGER NOT NULL REFERENCES classes(id),
             teacher_id   INTEGER REFERENCES teachers(id),
             subject_id   INTEGER REFERENCES subjects(id),
+            slot_id      INTEGER REFERENCES timetable_slots(id),
             session_date TEXT    NOT NULL,
             start_time   TEXT,
             end_time     TEXT,
+            room         TEXT,
             status       TEXT    NOT NULL DEFAULT 'SCHEDULED'
                              CHECK (status IN
                                  ('SCHEDULED', 'OPEN', 'CLOSED', 'COMPLETED')),
@@ -169,16 +192,21 @@ def create_tables(conn):
     """)
 
     # ------------------------------------------------------------------
+    # Password reset tokens (store only token hashes)
+    # ------------------------------------------------------------------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_id INTEGER NOT NULL REFERENCES teachers(id),
+            token_hash TEXT    NOT NULL UNIQUE,
+            expires_at TEXT    NOT NULL,
+            created_at TEXT    NOT NULL
+        )
+    """)
+
+    # ------------------------------------------------------------------
     # attendance
     # ------------------------------------------------------------------
-    # One row = one student present in one session.
-    #
-    # CRITICAL: UNIQUE(session_id, student_id)
-    #   The database enforces this — no student can appear twice in the
-    #   same session regardless of application-layer checks.
-    #
-    # status: "present" is the only value needed for now. Reserved for
-    #   future use (e.g. "late", "excused").
     cur.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -190,6 +218,16 @@ def create_tables(conn):
             UNIQUE (session_id, student_id)
         )
     """)
+
+    # Upgrade existing prototype databases without dropping user data.
+    _ensure_column(conn, "attendance_sessions", "slot_id", "INTEGER REFERENCES timetable_slots(id)")
+    _ensure_column(conn, "attendance_sessions", "room", "TEXT")
+
+
+def _ensure_column(conn, table: str, column: str, declaration: str):
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 # ---------------------------------------------------------------------------

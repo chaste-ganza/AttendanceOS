@@ -64,9 +64,11 @@ class SessionRow:
     teacher_name : Optional[str]
     subject_id   : Optional[int]
     subject_name : Optional[str]
+    slot_id      : Optional[int]
     session_date : str
     start_time   : Optional[str]
     end_time     : Optional[str]
+    room         : Optional[str]
     status       : str
     opened_at    : Optional[str]
     closed_at    : Optional[str]
@@ -98,9 +100,11 @@ class SessionRow:
             "teacher_name": self.teacher_name,
             "subject_id"  : self.subject_id,
             "subject_name": self.subject_name,
+            "slot_id"     : self.slot_id,
             "session_date": self.session_date,
             "start_time"  : self.start_time,
             "end_time"    : self.end_time,
+            "room"        : self.room,
             "status"      : self.status,
             "opened_at"   : self.opened_at,
             "closed_at"   : self.closed_at,
@@ -198,9 +202,11 @@ def _row_to_session(row: sqlite3.Row) -> SessionRow:
         teacher_name = row["teacher_name"],
         subject_id   = row["subject_id"],
         subject_name = row["subject_name"],
+        slot_id      = row["slot_id"],
         session_date = row["session_date"],
         start_time   = row["start_time"],
         end_time     = row["end_time"],
+        room         = row["room"],
         status       = row["status"],
         opened_at    = row["opened_at"],
         closed_at    = row["closed_at"],
@@ -218,9 +224,11 @@ _SESSION_SELECT = """
         t.name          AS teacher_name,
         s.subject_id,
         sub.name        AS subject_name,
+        s.slot_id,
         s.session_date,
         s.start_time,
         s.end_time,
+        s.room,
         s.status,
         s.opened_at,
         s.closed_at,
@@ -369,8 +377,10 @@ def create_session(
     session_date : Optional[str] = None,
     teacher_id   : Optional[int] = None,
     subject_id   : Optional[int] = None,
+    slot_id      : Optional[int] = None,
     start_time   : Optional[str] = None,
     end_time     : Optional[str] = None,
+    room         : Optional[str] = None,
 ) -> SessionResult:
     """
     Create a new attendance session with status SCHEDULED.
@@ -400,12 +410,12 @@ def create_session(
                 cur.execute(
                     """
                     INSERT INTO attendance_sessions
-                        (class_id, teacher_id, subject_id, session_date,
-                         start_time, end_time, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'SCHEDULED', ?)
+                        (class_id, teacher_id, subject_id, slot_id, session_date,
+                         start_time, end_time, room, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SCHEDULED', ?)
                     """,
-                    (class_id, teacher_id, subject_id, session_date,
-                     start_time, end_time, ts)
+                    (class_id, teacher_id, subject_id, slot_id, session_date,
+                     start_time, end_time, room, ts)
                 )
                 new_id = cur.lastrowid
         except sqlite3.IntegrityError as exc:
