@@ -4,9 +4,6 @@ import { CreditCard } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StepConfirm, StepConflict, StepScan, StepSelect } from "@/components/cards/AssignCardSteps";
 import { api } from "@/api/client";
-import { nextCardUid, sleep } from "@/lib/attendance-utils";
-
-const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
 export default function AssignCardModal({ open, onOpenChange, students, initialStudentId, onAssigned }) {
   const key = `${open}:${initialStudentId || ""}`;
@@ -33,39 +30,46 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
 
   const student = students.find((item) => item.id === selectedId) || null;
 
-  const runScan = async (mode) => {
+  const runScan = async () => {
     if (scanning || !student) return;
     setScanning(true);
     setUid("");
-    await sleep(1100);
-
-    const candidate =
-      mode === "conflict"
-        ? (() => {
-            const others = students.filter((item) => item.rfid_uid && item.id !== student.id);
-            return others.length ? pick(others).rfid_uid : nextCardUid(students);
-          })()
-        : nextCardUid(students);
-
-    setUid(candidate);
-    setScanning(false);
-
-    const found = students.find((item) => item.rfid_uid === candidate && item.id !== student.id) || null;
-    setOwner(found);
-    setStep(found ? "conflict" : "scan");
+    setStep("scan");
+    try {
+      const response = await api.cards.assign(student.id, 30);
+      const check = response.check;
+      if (response.outcome !== "CARD_SCANNED" || !check) {
+        throw new Error(response.message || "The reader did not return a card UID.");
+      }
+      const candidate = response.uid;
+      setUid(candidate);
+      if (check.outcome === "OWNED_BY_OTHER") {
+        const ownerId = String(check.current_owner_id);
+        setOwner(students.find((item) => String(item.id) === ownerId) || {
+          id: ownerId,
+          full_name: check.current_owner_name,
+          student_code: check.current_owner_reg,
+          rfid_uid: candidate,
+        });
+        setStep("conflict");
+      } else if (["UNASSIGNED", "ALREADY_ASSIGNED_SELF"].includes(check.outcome)) {
+        setOwner(null);
+        setStep("scan");
+      } else {
+        throw new Error(check.message || "This student or card cannot be assigned.");
+      }
+    } catch (error) {
+      toast.error(error.message || "The reader could not scan a card.");
+    } finally {
+      setScanning(false);
+    }
   };
 
   const finish = async () => {
     if (!student || !uid) return;
     setSaving(true);
     try {
-      if (owner) {
-        await api.entities.Student.update(owner.id, { rfid_uid: "" });
-      }
-      await api.entities.Student.update(student.id, {
-        rfid_uid: uid,
-        card_assigned_at: new Date().toISOString(),
-      });
+      await api.cards.confirm(student.id, uid);
       toast.success(owner ? "RFID card reassigned" : "RFID card successfully assigned.", {
         description: `${uid} → ${student.full_name}`,
       });
@@ -119,8 +123,7 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
             student={student}
             scanning={scanning}
             uid={uid}
-            onScan={() => runScan("fresh")}
-            onScanConflict={() => runScan("conflict")}
+            onScan={() => runScan()}
             onConfirm={owner ? () => setStep("confirm") : finish}
             onRescan={() => runScan("fresh")}
             onBack={() => {
