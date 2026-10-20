@@ -13,6 +13,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!Frontend/AttendanceOs/src/lib/
 lib64/
 parts/
 sdist/

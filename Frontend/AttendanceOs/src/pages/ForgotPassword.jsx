@@ -12,14 +12,12 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
-  const [resetUrl, setResetUrl] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const result = await api.auth.resetPasswordRequest(email);
-      setResetUrl(result.resetUrl || "");
+      await api.auth.resetPasswordRequest(email);
       setSent(true);
     } catch (error) {
       toast.error(error.message || "Could not request a password reset.");
@@ -32,7 +30,7 @@ export default function ForgotPassword() {
     <AuthLayout
       icon={Mail}
       title="Reset password"
-      subtitle="We'll send you a link to reset it"
+      subtitle="We'll send a reset link if mail delivery is configured on this server."
       footer={
         <Link to="/login" className="text-primary font-medium hover:underline">
           <ArrowLeft className="w-3 h-3 inline mr-1" />Back to log in
@@ -44,11 +42,6 @@ export default function ForgotPassword() {
           <p className="text-sm text-foreground">
             If an account exists with that email, you'll receive a password reset link shortly.
           </p>
-          {resetUrl && (
-            <a className="break-all text-sm font-medium text-primary hover:underline" href={resetUrl}>
-              Open local demo reset link
-            </a>
-          )}
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">

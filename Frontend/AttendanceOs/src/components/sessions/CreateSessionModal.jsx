@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { CalendarPlus } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -6,12 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/api/client";
-import { CLASS_OPTIONS } from "@/lib/classroom";
 import { toISODate } from "@/lib/attendance-utils";
 import useCurrentUser from "@/lib/use-current-user";
 
 const EMPTY = {
-  class_name: "CS Year 3",
+  class_name: "",
   subject: "",
   teacher_name: "",
   room: "",
@@ -31,6 +31,10 @@ export default function CreateSessionModal(props) {
 }
 
 function CreateSessionForm({ onOpenChange, onCreated, initialValues, user }) {
+  const { data: classes = [], isPending: classesLoading, isError: classesError } = useQuery({
+    queryKey: ["classes"],
+    queryFn: () => api.classes.list(),
+  });
   const [form, setForm] = useState(() => ({
     ...EMPTY,
     date: toISODate(),
@@ -40,10 +44,13 @@ function CreateSessionForm({ onOpenChange, onCreated, initialValues, user }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const selectedClassName = form.class_name || classes[0]?.name || "";
+
   const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (!selectedClassName) return setError("Create a class before scheduling a session.");
     if (!form.subject.trim()) return setError("Give the session a name, for example “Database Systems”.");
     if (!form.date) return setError("Pick the date the session takes place.");
     if (!form.start_time || !form.end_time) return setError("Set both a start and an end time.");
@@ -54,6 +61,7 @@ function CreateSessionForm({ onOpenChange, onCreated, initialValues, user }) {
     try {
       const created = await api.entities.Session.create({
         ...form,
+        class_name: selectedClassName,
         subject: form.subject.trim(),
         teacher_name: form.teacher_name.trim() || user?.full_name || "Teacher",
         status: "scheduled",
@@ -87,16 +95,19 @@ function CreateSessionForm({ onOpenChange, onCreated, initialValues, user }) {
               <Label htmlFor="class_name">Class</Label>
               <select
                 id="class_name"
-                value={form.class_name}
+                value={selectedClassName}
                 onChange={(event) => update("class_name", event.target.value)}
                 className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
               >
-                {CLASS_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
+                {classes.map((option) => (
+                  <option key={option.id} value={option.name}>
+                    {option.name}
                   </option>
                 ))}
               </select>
+              {classesLoading && <p className="text-xs text-muted-foreground">Loading classes…</p>}
+              {classesError && <p className="text-xs text-destructive" role="alert">Could not load classes.</p>}
+              {!classesLoading && !classesError && classes.length === 0 && <p className="text-xs text-muted-foreground">No classes are in the database yet.</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="room">Room</Label>
@@ -124,7 +135,7 @@ function CreateSessionForm({ onOpenChange, onCreated, initialValues, user }) {
             <Input
               id="teacher_name"
               value={form.teacher_name}
-              onChange={(event) => update("teacher_name", event.target.value)}
+                readOnly
               placeholder="Teacher name"
             />
           </div>
