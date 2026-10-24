@@ -2,29 +2,39 @@
 
 The Compose stack has three services:
 
-- `nginx` is the only service published to the host. It serves the frontend at `/` and proxies `/api/` to Flask.
-- `frontend` builds the Vite app and serves its static files with Nginx, including client-side route fallback.
+- `nginx` serves the frontend at `/` and proxies `/api/` to Flask on host port 8080 by default.
+- `frontend` builds the Vite app and serves its static files with Nginx, including client-side route fallback. It is also directly published on host port 3000 and proxies `/api/` to Flask.
 - `backend` runs Flask and stores SQLite data in the persistent `attendance_data` volume.
+
+Use `compose.yaml` with Podman Compose. For Docker Compose, use the Docker-specific file:
+
+```sh
+docker compose -f compose.docker.yaml up --build -d
+```
+
+Both files start the same services and publish the frontend on port 3000 and the gateway on port 8080 by default. The Docker file omits the Podman SELinux relabel option on the Nginx configuration mount.
 
 ## Start
 
 ```sh
-docker compose up --build -d
+docker compose -f compose.docker.yaml up --build -d
 ```
 
-Open <http://localhost:8080>. The port can be changed with `HTTP_PORT`, for example `HTTP_PORT=80 docker compose up --build -d`. Check the backend through the proxy at <http://localhost:8080/api/health>.
+Open <http://localhost:8080> through the gateway or <http://localhost:3000> directly through the frontend. The gateway port can be changed with `HTTP_PORT`, for example `HTTP_PORT=80 docker compose -f compose.docker.yaml up --build -d`. Check the backend through either proxy at `/api/health`.
 
-Stop the services with `docker compose down`. This keeps the SQLite volume. To intentionally remove the stored data as well, use `docker compose down --volumes`.
+Stop the services with `docker compose -f compose.docker.yaml down`. This keeps the SQLite volume. To intentionally remove the stored data as well, use `docker compose -f compose.docker.yaml down --volumes`.
 
 ## Optional RFID reader
 
 The default stack starts without a serial device, and the API reports the reader as offline. On Linux, connect the reader and start with the hardware override:
 
 ```sh
-RFID_DEVICE=/dev/ttyUSB0 docker compose -f compose.yaml -f compose.rfid.yaml up --build -d
+RFID_DEVICE=/dev/ttyUSB0 docker compose -f compose.docker.yaml -f compose.rfid.yaml up --build -d
 ```
 
 Set `RFID_DEVICE` to the host device path when it differs. The override passes that device into the backend container as `/dev/ttyUSB0`.
+
+For Podman, use `podman compose -f compose.yaml -f compose.rfid.yaml up --build -d` with the same `RFID_DEVICE` setting.
 
 ## Application data and authentication
 
