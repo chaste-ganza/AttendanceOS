@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, CalendarDays, Clock, Lock, MapPin, PlayCircle, User } from "lucide-react";
@@ -17,7 +17,6 @@ import { SESSION_STATUS, formatDate, sessionStats } from "@/lib/attendance-utils
 
 export default function SessionDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["classroom"],
@@ -158,9 +157,6 @@ export default function SessionDetail() {
           setLatestId(record.id);
         }}
         onOpenSession={handleOpen}
-        onAssignCard={(options) =>
-          navigate(`/rfid-cards?assign=${options?.reassign ? "reassign" : "new"}`)
-        }
       />
 
       <LiveAttendanceTable session={session} students={students} records={records} latestId={latestId} />

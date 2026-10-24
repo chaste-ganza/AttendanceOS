@@ -58,18 +58,18 @@ function AuthenticatedApp() {
 function App() {
   return (
     <ThemeProvider defaultTheme="light">
-      <AuthProvider>
-        <QueryClientProvider client={queryClientInstance}>
-          <ReaderProvider>
-            <Router>
+      <Router>
+        <AuthProvider>
+          <QueryClientProvider client={queryClientInstance}>
+            <ReaderProvider>
               <ScrollToTop />
               <AuthenticatedApp />
-            </Router>
-            <Toaster />
-            <SonnerToaster position="top-right" richColors closeButton />
-          </ReaderProvider>
-        </QueryClientProvider>
-      </AuthProvider>
+              <Toaster />
+              <SonnerToaster position="top-right" richColors closeButton />
+            </ReaderProvider>
+          </QueryClientProvider>
+        </AuthProvider>
+      </Router>
     </ThemeProvider>
   )
 }

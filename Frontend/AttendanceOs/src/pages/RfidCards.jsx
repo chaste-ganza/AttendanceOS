@@ -1,13 +1,14 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CreditCard, Plus, Radio, RefreshCw, Search, WifiOff } from "lucide-react";
+import { CreditCard, Plus, Radio, RefreshCw, Search, WifiOff, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StatusBadge from "@/components/common/StatusBadge";
 import EmptyState from "@/components/common/EmptyState";
 import { TableSkeleton } from "@/components/common/Skeletons";
 import AssignCardModal from "@/components/cards/AssignCardModal";
+import CreateStudentModal from "@/components/students/CreateStudentModal";
 import { useReader } from "@/lib/reader-context";
 import { loadClassroom } from "@/lib/classroom";
 import { avatarTone, initials, rosterOf } from "@/lib/attendance-utils";
@@ -26,7 +27,7 @@ const CARD_NONE =
 
 export default function RfidCards() {
   const navigate = useNavigate();
-  const { isOnline, toggle } = useReader();
+  const { isOnline, readerPort, error: readerError, refresh: refreshReader } = useReader();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data, isError, refetch } = useQuery({
     queryKey: ["classroom"],
@@ -35,6 +36,7 @@ export default function RfidCards() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [createStudentOpen, setCreateStudentOpen] = useState(false);
   const [preselect, setPreselect] = useState(null);
 
   const refresh = useCallback(() => refetch(), [refetch]);
@@ -77,10 +79,16 @@ export default function RfidCards() {
           <h2 className="font-heading text-2xl font-extrabold tracking-tight">RFID Card Management</h2>
           <p className="mt-1 text-sm text-muted-foreground">Assign and manage RFID cards for students.</p>
         </div>
-        <Button onClick={() => openFor(null)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Assign New Card
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setCreateStudentOpen(true)}>
+            <UserPlus className="mr-2 h-4 w-4" />
+            Add Student
+          </Button>
+          <Button onClick={() => openFor(null)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Assign New Card
+          </Button>
+        </div>
       </div>
 
       <div
@@ -98,7 +106,7 @@ export default function RfidCards() {
           {isOnline ? <Radio className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
         </div>
         <div className="mr-auto">
-          <p className="font-heading text-sm font-bold tracking-tight">READER-01 · USB-HID</p>
+          <p className="font-heading text-sm font-bold tracking-tight">RFID reader{readerPort ? ` · ${readerPort}` : ""}</p>
           <p className={cn("text-xs font-medium", isOnline ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300")}>
             {isOnline ? "🟢 Reader Online — ready to read cards" : "🔴 Reader Offline — card scanning unavailable"}
           </p>
@@ -111,10 +119,11 @@ export default function RfidCards() {
             {counts.withoutCard} without card
           </span>
         </div>
-        <Button variant="outline" size="sm" onClick={toggle}>
+        <Button variant="outline" size="sm" onClick={refreshReader}>
           <RefreshCw className="mr-2 h-3.5 w-3.5" />
-          {isOnline ? "Simulate disconnect" : "Bring online"}
+          Refresh status
         </Button>
+        {readerError && <p className="w-full text-xs text-destructive" role="status">{readerError.message}</p>}
       </div>
 
       <div className="surface overflow-hidden">
@@ -285,6 +294,11 @@ export default function RfidCards() {
         students={students}
         initialStudentId={searchParams.has("assign") ? null : preselect}
         onAssigned={refresh}
+      />
+      <CreateStudentModal
+        open={createStudentOpen}
+        onOpenChange={setCreateStudentOpen}
+        onCreated={refresh}
       />
     </div>
   );

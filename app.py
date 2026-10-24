@@ -24,12 +24,18 @@ Configuration (environment variables or defaults):
 """
 
 import os
+import smtplib
+from email.message import EmailMessage
 import threading
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, request, abort
+from flask import Flask, jsonify, request, session as login_session
 
 from database          import initialize_database
+from auth_service      import (
+    authenticate_teacher, create_teacher, get_teacher,
+    issue_reset_token, reset_teacher_password,
+)
 from rfid_state        import rfid_state
 from rfid_listener     import RFIDListener, EventKind, create_listener
 from rfid_service      import process_scan, ScanOutcome
@@ -51,10 +57,32 @@ from card_management_service import (
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
+)
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+@app.before_request
+def require_teacher_session():
+    if not request.path.startswith("/api/") or request.path == "/api/health":
+        return None
+    if request.endpoint in {
+        "api_register", "api_login", "api_auth_me", "api_logout",
+        "api_password_reset_request", "api_password_reset_complete",
+    }:
+        return None
+    teacher_id = login_session.get("teacher_id")
+    if not teacher_id or get_teacher(teacher_id) is None:
+        login_session.clear()
+        return _err("Authentication required.", 401)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +188,102 @@ def _session_outcome_to_status(outcome: SessionOutcome) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Teacher authentication
+# ---------------------------------------------------------------------------
+
+@app.route("/api/auth/register", methods=["POST"])
+def api_register():
+    body = request.get_json(silent=True) or {}
+    teacher, message, status = create_teacher(
+        body.get("email", ""), body.get("full_name", ""), body.get("password", "")
+    )
+    if teacher is None:
+        return _err(message, status)
+    login_session.clear()
+    login_session["teacher_id"] = teacher["id"]
+    login_session.permanent = True
+    return _ok({"user": teacher, "message": message}, 201)
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    body = request.get_json(silent=True) or {}
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    teacher = authenticate_teacher(email, password)
+    if teacher is None:
+        return _err("Invalid email or password.", 401)
+    login_session.clear()
+    login_session["teacher_id"] = teacher["id"]
+    login_session.permanent = True
+    return _ok({"user": teacher})
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def api_auth_me():
+    teacher_id = login_session.get("teacher_id")
+    teacher = get_teacher(teacher_id) if teacher_id else None
+    if teacher is None:
+        login_session.clear()
+        return _err("Not authenticated.", 401)
+    return _ok({"user": teacher})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_logout():
+    login_session.clear()
+    return _ok({"message": "Signed out."})
+
+
+@app.route("/api/auth/password-reset", methods=["POST"])
+def api_password_reset_request():
+    smtp_host = os.environ.get("SMTP_HOST")
+    if not smtp_host:
+        return _err("Password reset email is not configured on this server.", 503)
+
+    body = request.get_json(silent=True) or {}
+    email = (body.get("email") or "").strip().lower()
+    reset = issue_reset_token(email)
+    if reset:
+        base_url = os.environ.get("PUBLIC_BASE_URL", request.url_root.rstrip("/"))
+        reset_url = f"{base_url.rstrip('/')}/reset-password?token={reset['token']}"
+        message = EmailMessage()
+        message["Subject"] = "AttendanceOS password reset"
+        message["From"] = os.environ.get("SMTP_FROM", os.environ.get("SMTP_USERNAME", ""))
+        message["To"] = reset["teacher"]["email"]
+        message.set_content(
+            "Use the following link to reset your AttendanceOS password. "
+            "It expires in one hour.\n\n" + reset_url
+        )
+        try:
+            with smtplib.SMTP(smtp_host, int(os.environ.get("SMTP_PORT", "587")), timeout=10) as smtp:
+                if os.environ.get("SMTP_USE_TLS", "1") == "1":
+                    smtp.starttls()
+                username = os.environ.get("SMTP_USERNAME")
+                password = os.environ.get("SMTP_PASSWORD")
+                if username:
+                    smtp.login(username, password or "")
+                smtp.send_message(message)
+        except (OSError, smtplib.SMTPException, ValueError):
+            return _err("Password reset email could not be sent. Check the mail server configuration.", 503)
+
+    return _ok({"message": "If an account exists with that email, a reset link will be sent."})
+
+
+@app.route("/api/auth/password-reset/complete", methods=["POST"])
+def api_password_reset_complete():
+    body = request.get_json(silent=True) or {}
+    token = body.get("reset_token") or ""
+    new_password = body.get("new_password") or ""
+    if not token:
+        return _err("reset_token is required.", 400)
+    success, message, status = reset_teacher_password(token, new_password)
+    if not success:
+        return _err(message, status)
+    return _ok({"message": message})
+
+
+# ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 
@@ -258,10 +382,12 @@ def api_create_session():
     result = create_session(
         class_id     = class_id,
         session_date = body.get("session_date"),
-        teacher_id   = body.get("teacher_id"),
+        teacher_id   = body.get("teacher_id") or login_session.get("teacher_id"),
         subject_id   = body.get("subject_id"),
+        slot_id      = body.get("slot_id"),
         start_time   = body.get("start_time"),
         end_time     = body.get("end_time"),
+        room         = body.get("room"),
     )
 
     if not result.success():
@@ -365,6 +491,145 @@ def api_session_attendance(session_id: int):
         "count"      : len(rows),
         "attendance" : [r.to_dict() for r in rows],
     })
+
+
+@app.route("/api/attendance", methods=["GET"])
+def api_list_attendance():
+    """List persisted attendance, optionally filtered by session or student."""
+    from database import get_connection
+    session_id = request.args.get("session_id", type=int)
+    student_id = request.args.get("student_id", type=int)
+    clauses = []
+    params = []
+    if session_id is not None:
+        clauses.append("a.session_id = ?")
+        params.append(session_id)
+    if student_id is not None:
+        clauses.append("a.student_id = ?")
+        params.append(student_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT a.id, a.session_id, a.student_id, a.attendance_time, a.status, "
+            "a.created_at, s.first_name, s.last_name, s.registration_number, s.rfid_uid "
+            "FROM attendance a JOIN students s ON s.id = a.student_id "
+            f"{where} ORDER BY a.attendance_time DESC",
+            params,
+        ).fetchall()
+        records = []
+        for row in rows:
+            record = dict(row)
+            record["full_name"] = f"{row['first_name']} {row['last_name']}".strip()
+            records.append(record)
+    finally:
+        conn.close()
+    return _ok({"attendance": records, "count": len(records)})
+
+
+_TIMETABLE_SLOT_SELECT = """
+    SELECT slot.id, slot.day_of_week, slot.class_id, cls.name AS class_name,
+           slot.subject_id, sub.name AS subject, slot.teacher_id,
+           teacher.name AS teacher_name, slot.room, slot.start_time,
+           slot.end_time, slot.accent, slot.created_at
+    FROM timetable_slots slot
+    JOIN classes cls ON cls.id = slot.class_id
+    JOIN subjects sub ON sub.id = slot.subject_id
+    LEFT JOIN teachers teacher ON teacher.id = slot.teacher_id
+"""
+
+
+@app.route("/api/timetable-slots", methods=["GET", "POST"])
+def api_timetable_slots():
+    from database import get_connection
+    if request.method == "GET":
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                _TIMETABLE_SLOT_SELECT +
+                " ORDER BY CASE slot.day_of_week WHEN 'monday' THEN 1 WHEN 'tuesday' THEN 2 "
+                "WHEN 'wednesday' THEN 3 WHEN 'thursday' THEN 4 ELSE 5 END, slot.start_time"
+            ).fetchall()
+            return _ok({"slots": [dict(row) for row in rows]})
+        finally:
+            conn.close()
+
+    body = request.get_json(silent=True) or {}
+    day = (body.get("day_of_week") or "").strip().lower()
+    if day not in {"monday", "tuesday", "wednesday", "thursday", "friday"}:
+        return _err("day_of_week must be a weekday from monday to friday.", 400)
+    required = ("class_id", "subject_id", "start_time", "end_time")
+    if any(not body.get(key) for key in required):
+        return _err("class_id, subject_id, start_time, and end_time are required.", 400)
+    if body["end_time"] <= body["start_time"]:
+        return _err("end_time must be later than start_time.", 400)
+    conn = get_connection()
+    try:
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO timetable_slots (day_of_week, class_id, subject_id, teacher_id, "
+                "room, start_time, end_time, accent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (day, body["class_id"], body["subject_id"], body.get("teacher_id"),
+                 body.get("room"), body["start_time"], body["end_time"],
+                 body.get("accent") or "indigo", _now_iso()),
+            )
+            slot_id = cursor.lastrowid
+        row = conn.execute(_TIMETABLE_SLOT_SELECT + " WHERE slot.id = ?", (slot_id,)).fetchone()
+        return _ok({"slot": dict(row)}, 201)
+    except Exception as exc:
+        return _err(f"Could not create timetable slot: {exc}", 400)
+    finally:
+        conn.close()
+
+
+@app.route("/api/timetable-slots/<int:slot_id>", methods=["PATCH", "DELETE"])
+def api_timetable_slot(slot_id: int):
+    from database import get_connection
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM timetable_slots WHERE id = ?", (slot_id,)).fetchone()
+        if row is None:
+            return _err(f"Timetable slot {slot_id} not found.", 404)
+        if request.method == "DELETE":
+            used = conn.execute(
+                "SELECT COUNT(*) FROM attendance_sessions WHERE slot_id = ?", (slot_id,)
+            ).fetchone()[0]
+            if used:
+                return _err(f"Cannot delete this slot: {used} session(s) refer to it.", 409)
+            with conn:
+                conn.execute("DELETE FROM timetable_slots WHERE id = ?", (slot_id,))
+            return _ok({"message": f"Timetable slot {slot_id} deleted."})
+
+        body = request.get_json(silent=True) or {}
+        allowed = {"day_of_week", "class_id", "subject_id", "teacher_id", "room",
+                   "start_time", "end_time", "accent"}
+        updates = {key: body[key] for key in allowed if key in body}
+        if "day_of_week" in updates:
+            updates["day_of_week"] = str(updates["day_of_week"]).lower()
+            if updates["day_of_week"] not in {"monday", "tuesday", "wednesday", "thursday", "friday"}:
+                return _err("day_of_week must be a weekday from monday to friday.", 400)
+        current = conn.execute(
+            "SELECT start_time, end_time FROM timetable_slots WHERE id = ?", (slot_id,)
+        ).fetchone()
+        start_time = updates.get("start_time", current["start_time"])
+        end_time = updates.get("end_time", current["end_time"])
+        if end_time <= start_time:
+            return _err("end_time must be later than start_time.", 400)
+        if updates:
+            clause = ", ".join(f"{key} = ?" for key in updates)
+            with conn:
+                conn.execute(
+                    f"UPDATE timetable_slots SET {clause} WHERE id = ?",
+                    [*updates.values(), slot_id],
+                )
+        updated = conn.execute(
+            _TIMETABLE_SLOT_SELECT + " WHERE slot.id = ?", (slot_id,)
+        ).fetchone()
+        return _ok({"slot": dict(updated)})
+    except Exception as exc:
+        return _err(f"Could not update timetable slot: {exc}", 400)
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1245,7 +1510,8 @@ def api_update_session(session_id: int):
     """
     Update editable session fields.
 
-    Allowed fields: session_date, start_time, end_time, teacher_id, subject_id.
+    Allowed fields: session_date, start_time, end_time, room, teacher_id,
+    subject_id, slot_id.
     class_id may also be updated, but ONLY if the session is still SCHEDULED
     (no attendance can have been taken yet).
 
@@ -1281,10 +1547,14 @@ def api_update_session(session_id: int):
             updates["start_time"] = body["start_time"] or None
         if "end_time" in body:
             updates["end_time"] = body["end_time"] or None
+        if "room" in body:
+            updates["room"] = body["room"] or None
         if "teacher_id" in body:
             updates["teacher_id"] = body["teacher_id"]
         if "subject_id" in body:
             updates["subject_id"] = body["subject_id"]
+        if "slot_id" in body:
+            updates["slot_id"] = body["slot_id"] or None
 
         # class_id only allowed when SCHEDULED (no attendance exists yet).
         if "class_id" in body:

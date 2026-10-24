@@ -1,25 +1,26 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Radio, Timer, Zap, WifiOff, ScanLine } from "lucide-react";
+import { Radio, Timer, WifiOff, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useReader } from "@/lib/reader-context";
 import useAttendanceScanner from "@/hooks/useAttendanceScanner";
 import ScanVisual from "@/components/rfid/ScanVisual";
 import ScanResult from "@/components/rfid/ScanResult";
-import SimulatorMenu from "@/components/rfid/SimulatorMenu";
 import { formatElapsed } from "@/lib/attendance-utils";
 
-export default function RfidScanner({ session, students, records, onRecorded, onOpenSession, onAssignCard }) {
+export default function RfidScanner({ session, students, records, onRecorded, onOpenSession }) {
   const navigate = useNavigate();
-  const { isOnline, goOnline } = useReader();
+  const { isOnline, readerPort, refresh } = useReader();
   const [, refreshElapsed] = useState(0);
   const scanner = useAttendanceScanner({ session, students, records, onRecorded });
 
   const locked = !session || session.status !== "open";
   const lockedState = locked ? (session?.status === "scheduled" ? "scheduled" : "closed") : null;
-  const view = scanner.state === "idle" && lockedState ? lockedState : scanner.state;
+  const view = scanner.state === "idle"
+    ? (lockedState || (!isOnline ? "offline" : "idle"))
+    : scanner.state;
 
   useEffect(() => {
     const id = setInterval(() => refreshElapsed((value) => value + 1), 1000);
@@ -43,14 +44,10 @@ export default function RfidScanner({ session, students, records, onRecorded, on
     if (scanner.state === "offline") {
       toast.error("RFID reader offline", { description: "Reconnect the reader to continue recording attendance." });
     }
+    if (scanner.state === "error" && scanner.result?.message) {
+      toast.error("Could not read scan status", { description: scanner.result.message });
+    }
   }, [scanner.state, scanner.result]);
-
-  const canScan = isOnline && !locked && !scanner.busy;
-
-  const handleScan = () => {
-    if (!isOnline || locked || scanner.busy) return;
-    scanner.simulateRandom();
-  };
 
   return (
     <section className="surface overflow-hidden">
@@ -65,7 +62,7 @@ export default function RfidScanner({ session, students, records, onRecorded, on
             {isOnline ? <Radio className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
           </div>
           <div>
-            <p className="font-heading text-sm font-bold tracking-tight">READER-01 · USB-HID</p>
+            <p className="font-heading text-sm font-bold tracking-tight">RFID reader{readerPort ? ` · ${readerPort}` : ""}</p>
             <p className={cn("text-xs font-medium", isOnline ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300")}>
               {isOnline ? "Reader Online" : "Reader Offline"}
             </p>
@@ -99,46 +96,32 @@ export default function RfidScanner({ session, students, records, onRecorded, on
           result={scanner.result}
           onManageCard={() => navigate("/rfid-cards")}
           onOpenSession={onOpenSession}
-          onReconnect={() => {
-            goOnline();
+          onReconnect={async () => {
+            await refresh();
             scanner.reset();
-            toast.success("Reader reconnected");
+            toast.success("Reader status refreshed");
           }}
         />
       </div>
 
       <footer className="flex flex-wrap items-center gap-3 border-t border-border/70 bg-muted/40 px-5 py-4">
-        <Button onClick={handleScan} disabled={!canScan} size="lg">
-          <Zap className="mr-2 h-4 w-4" />
-          {scanner.busy ? "Reading…" : "Simulate RFID Scan"}
-        </Button>
-
-        <SimulatorMenu
-          onSuccess={scanner.simulateSuccess}
-          onDuplicate={scanner.simulateDuplicate}
-          onUnknown={scanner.simulateUnknown}
-          onAssign={() => onAssignCard?.()}
-          onReassign={() => onAssignCard?.({ reassign: true })}
-          onOffline={scanner.simulateOffline}
-        />
-
         {!isOnline && (
           <Button
             variant="outline"
-            onClick={() => {
-              goOnline();
+            onClick={async () => {
+              await refresh();
               scanner.reset();
-              toast.success("Reader reconnected");
+              toast.success("Reader status refreshed");
             }}
           >
             <Radio className="mr-2 h-4 w-4" />
-            Bring reader online
+            Refresh reader status
           </Button>
         )}
 
         <p className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex">
           <ScanLine className="h-3.5 w-3.5" />
-          {locked ? "Scanner disabled while the session is not open" : "No reader at hand? The simulator behaves exactly like the hardware"}
+          {locked ? "Scanner disabled while the session is not open" : "Scan a physical card on the connected reader; results appear here automatically."}
         </p>
       </footer>
     </section>

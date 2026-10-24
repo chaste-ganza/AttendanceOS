@@ -1,160 +1,92 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
-import { useReader } from "@/lib/reader-context";
-import { makeUid, nextCardUid, sleep } from "@/lib/attendance-utils";
 
-const pick = (list) => list[Math.floor(Math.random() * list.length)];
+const initial = { state: "idle", result: null, busy: false };
 
 export default function useAttendanceScanner({ session, students = [], records = [], onRecorded }) {
-  const { isOnline, goOffline } = useReader();
-  const [state, setState] = useState("idle");
-  const [result, setResult] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const lock = useRef(false);
+  const [state, setState] = useState(initial.state);
+  const [result, setResult] = useState(initial.result);
+  const [busy, setBusy] = useState(initial.busy);
+  const lastScanRef = useRef(null);
 
   const reset = useCallback(() => {
     setState("idle");
     setResult(null);
   }, []);
 
-  const scan = useCallback(
-    async (uid, { readDelay = 850 } = {}) => {
-      if (lock.current) return;
-      lock.current = true;
+  useEffect(() => {
+    if (!session || session.status !== "open") {
+      return undefined;
+    }
+
+    let active = true;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
       setBusy(true);
-      setResult(null);
+      try {
+        const scan = await api.reader.scanResult();
+        if (!active || scan.outcome === "IDLE" || !scan.last_scan_at) return;
+        const scanKey = `${scan.last_scan_at}:${scan.uid || ""}:${scan.outcome}`;
+        if (lastScanRef.current === scanKey) return;
+        lastScanRef.current = scanKey;
+        if (scan.session_id != null && String(scan.session_id) !== String(session.id)) return;
 
-      if (!isOnline) {
-        setState("offline");
-        setResult({ uid });
-        lock.current = false;
-        setBusy(false);
-        return;
+        const student = students.find((item) => String(item.id) === String(scan.student_id)) || null;
+        const time = scan.attendance_time || scan.last_scan_at;
+        let record = records.find((item) =>
+          String(item.session_id) === String(session.id) && String(item.student_id) === String(scan.student_id)
+        ) || null;
+
+        if (scan.outcome === "SUCCESS" || scan.outcome === "DUPLICATE") {
+          const allRecords = await api.entities.Attendance.filter({ session_id: session.id });
+          record = allRecords.find((item) => String(item.student_id) === String(scan.student_id)) || record;
+          if (scan.outcome === "SUCCESS" && record) onRecorded?.(record);
+        }
+
+        if (!active) return;
+        const nextState = {
+          SUCCESS: "success",
+          DUPLICATE: "duplicate",
+          UNKNOWN_CARD: "unknown",
+          WRONG_CLASS: "wrong-class",
+          NO_OPEN_SESSION: "closed",
+          ERROR: "error",
+        }[scan.outcome] || "error";
+        setState(nextState);
+        setResult({
+          uid: scan.uid,
+          student,
+          time: record?.recorded_at || time,
+          record,
+          message: scan.message,
+        });
+      } catch (requestError) {
+        if (active) {
+          setState("error");
+          setResult({ message: requestError.message });
+        }
+      } finally {
+        inFlight = false;
+        if (active) setBusy(false);
       }
+    };
 
-      if (!session || session.status !== "open") {
-        setState("closed");
-        setResult({ uid });
-        lock.current = false;
-        setBusy(false);
-        return;
-      }
+    poll();
+    const timer = window.setInterval(poll, 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [session, students, records, onRecorded]);
 
-      setState("scanning");
-      await sleep(readDelay);
-
-      const student = students.find((item) => item.rfid_uid && item.rfid_uid === uid) || null;
-
-      if (!student) {
-        setState("unknown");
-        setResult({ uid });
-        lock.current = false;
-        setBusy(false);
-        return;
-      }
-
-      const existing = records.find((item) => item.session_id === session.id && item.student_id === student.id);
-
-      if (existing) {
-        setState("duplicate");
-        setResult({ uid, student, time: existing.recorded_at });
-        lock.current = false;
-        setBusy(false);
-        return;
-      }
-
-      const created = await api.entities.Attendance.create({
-        session_id: session.id,
-        student_id: student.id,
-        rfid_uid: uid,
-        status: "present",
-        recorded_at: new Date().toISOString(),
-        method: "rfid",
-      });
-
-      onRecorded?.(created);
-      setState("success");
-      setResult({ uid, student, time: created.recorded_at, record: created });
-      lock.current = false;
-      setBusy(false);
-    },
-    [isOnline, session, students, records, onRecorded]
-  );
-
-  const cardedStudents = students.filter((student) => student.rfid_uid);
-  const unrecorded = cardedStudents.filter(
-    (student) => !records.some((item) => item.session_id === session?.id && item.student_id === student.id)
-  );
-  const alreadyRecorded = cardedStudents.filter((student) =>
-    records.some((item) => item.session_id === session?.id && item.student_id === student.id)
-  );
-
-  const simulateRandom = useCallback(async () => {
-    const roll = Math.random();
-
-    if (roll < 0.06) {
-      goOffline();
-      setResult({ uid: null });
-      setState("offline");
-      return;
-    }
-    if (roll < 0.16 && alreadyRecorded.length) {
-      await scan(pick(alreadyRecorded).rfid_uid);
-      return;
-    }
-    if (roll < 0.22) {
-      await scan(nextCardUid(students));
-      return;
-    }
-    if (unrecorded.length) {
-      await scan(pick(unrecorded).rfid_uid);
-      return;
-    }
-    if (alreadyRecorded.length) {
-      await scan(pick(alreadyRecorded).rfid_uid);
-      return;
-    }
-    await scan(makeUid());
-  }, [alreadyRecorded, unrecorded, students, scan, goOffline]);
-
-  const simulateSuccess = useCallback(async () => {
-    const target = unrecorded.length ? pick(unrecorded) : pick(cardedStudents);
-    if (!target) {
-      setState("unknown");
-      setResult({ uid: makeUid() });
-      return;
-    }
-    await scan(target.rfid_uid);
-  }, [unrecorded, cardedStudents, scan]);
-
-  const simulateDuplicate = useCallback(async () => {
-    if (!alreadyRecorded.length) {
-      await simulateSuccess();
-      return;
-    }
-    await scan(pick(alreadyRecorded).rfid_uid);
-  }, [alreadyRecorded, scan, simulateSuccess]);
-
-  const simulateUnknown = useCallback(async () => {
-    await scan(nextCardUid(students));
-  }, [students, scan]);
-
-  const simulateOffline = useCallback(() => {
-    goOffline();
-    setResult({ uid: null });
-    setState("offline");
-  }, [goOffline]);
-
+  const sessionOpen = Boolean(session && session.status === "open");
   return {
-    state,
-    result,
-    busy,
+    state: sessionOpen ? state : "idle",
+    result: sessionOpen ? result : null,
+    busy: sessionOpen && busy,
     reset,
-    scan,
-    simulateRandom,
-    simulateSuccess,
-    simulateDuplicate,
-    simulateUnknown,
-    simulateOffline,
   };
 }

@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+__pycache__
+*.py[cod]
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+attendance.db.*
+Frontend/AttendanceOs/node_modules
+Frontend/AttendanceOs/dist
+Frontend/AttendanceOs/.git

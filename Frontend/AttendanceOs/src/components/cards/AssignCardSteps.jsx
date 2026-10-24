@@ -94,7 +94,7 @@ export function StepSelect({ students, query, onQuery, onPick }) {
   );
 }
 
-export function StepScan({ student, scanning, uid, onScan, onScanConflict, onConfirm, onRescan, onBack }) {
+export function StepScan({ student, scanning, uid, onScan, onConfirm, onRescan, onBack }) {
   return (
     <div className="space-y-4">
       <StudentChip student={student} />
@@ -134,10 +134,7 @@ export function StepScan({ student, scanning, uid, onScan, onScanConflict, onCon
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button className="flex-1" onClick={onScan} disabled={scanning}>
               <ScanLine className="mr-2 h-4 w-4" />
-              {scanning ? "Reading card…" : "Simulate Card Scan"}
-            </Button>
-            <Button variant="outline" className="flex-1" onClick={onScanConflict} disabled={scanning}>
-              Simulate already-assigned card
+              {scanning ? "Waiting for reader…" : "Start card scan"}
             </Button>
           </div>
         </>

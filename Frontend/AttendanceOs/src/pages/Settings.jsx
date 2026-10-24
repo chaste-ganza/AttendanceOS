@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "@/components/theme-provider";
 import { toast } from "sonner";
 import { CreditCard, Moon, Radio, Sparkles, Sun, User, Users, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { api } from "@/api/client";
 import useCurrentUser from "@/lib/use-current-user";
 import { useReader } from "@/lib/reader-context";
 import { initials, rosterOf } from "@/lib/attendance-utils";
 import { cn } from "@/lib/utils";
+import { loadClassroom } from "@/lib/classroom";
 
 function Panel({ icon: Icon, title, description, children }) {
   return (
@@ -28,19 +32,32 @@ function Panel({ icon: Icon, title, description, children }) {
 
 export default function Settings() {
   const user = useCurrentUser();
-  const { isOnline, toggle } = useReader();
+  const { isOnline, readerPort, error: readerError, refresh: refreshReader } = useReader();
   const { setTheme, theme } = useTheme();
-  const [counts, setCounts] = useState(null);
+  const { data, isPending, isError, error, refetch } = useQuery({ queryKey: ["classroom"], queryFn: loadClassroom });
+  const queryClient = useQueryClient();
+  const { data: classes = [], isError: classesError, refetch: refetchClasses } = useQuery({ queryKey: ["classes"], queryFn: () => api.classes.list() });
+  const [className, setClassName] = useState("");
+  const [classError, setClassError] = useState("");
+  const [classSaving, setClassSaving] = useState(false);
+  const roster = rosterOf(data?.students || []);
+  const withCard = roster.filter((student) => student.rfid_uid).length;
 
-  useEffect(() => {
-    api.entities.Student.list("student_code", 300).then((students) => {
-      const roster = rosterOf(students);
-      setCounts({
-        total: roster.length,
-        withCard: roster.filter((student) => student.rfid_uid).length,
-      });
-    });
-  }, []);
+  const createClass = async (event) => {
+    event.preventDefault();
+    setClassError("");
+    setClassSaving(true);
+    try {
+      await api.classes.create({ name: className });
+      setClassName("");
+      await queryClient.invalidateQueries({ queryKey: ["classes"] });
+      toast.success("Class created");
+    } catch (requestError) {
+      setClassError(requestError.message);
+    } finally {
+      setClassSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -62,18 +79,19 @@ export default function Settings() {
           </div>
         </Panel>
 
-        <Panel icon={Radio} title="RFID Reader" description="READER-01 is the single reader used for this class.">
+        <Panel icon={Radio} title="RFID Reader" description="Status reported by the Flask reader service.">
           <div className="space-y-3">
             <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/40 px-4 py-3">
               <div>
                 <p className="text-sm font-semibold">{isOnline ? "🟢 Reader Online" : "🔴 Reader Offline"}</p>
-                <p className="text-xs text-muted-foreground">USB-HID · 13.56 MHz</p>
+                <p className="text-xs text-muted-foreground">{readerPort || "No serial device configured"}</p>
               </div>
               {isOnline ? <Radio className="h-5 w-5 text-emerald-500" /> : <WifiOff className="h-5 w-5 text-rose-500" />}
             </div>
-            <Button variant="outline" className="w-full" onClick={toggle}>
-              {isOnline ? "Simulate disconnect" : "Bring reader online"}
+            <Button variant="outline" className="w-full" onClick={refreshReader}>
+              Refresh reader status
             </Button>
+            {readerError && <p className="text-sm text-destructive" role="status">{readerError.message}</p>}
           </div>
         </Panel>
 
@@ -108,28 +126,52 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl border border-border/70 bg-muted/40 p-4">
               <Users className="h-4 w-4 text-muted-foreground" />
-              <p className="mt-2 font-heading text-2xl font-extrabold">{counts ? counts.total : "—"}</p>
+              <p className="mt-2 font-heading text-2xl font-extrabold">{isPending ? "—" : roster.length}</p>
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Students</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-muted/40 p-4">
               <CreditCard className="h-4 w-4 text-muted-foreground" />
-              <p className="mt-2 font-heading text-2xl font-extrabold">{counts ? counts.withCard : "—"}</p>
+              <p className="mt-2 font-heading text-2xl font-extrabold">{isPending ? "—" : withCard}</p>
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Active cards</p>
             </div>
           </div>
         </Panel>
       </div>
 
+      <Panel icon={Users} title="Classes" description="Classes are stored in the server database and used when scheduling sessions and enrolling students.">
+        <form onSubmit={createClass} className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[220px] flex-1 space-y-2">
+            <Label htmlFor="class-name">New class name</Label>
+            <Input id="class-name" value={className} onChange={(event) => setClassName(event.target.value)} placeholder="e.g. Year 1A" required />
+          </div>
+          <Button type="submit" disabled={classSaving}>{classSaving ? "Saving…" : "Add class"}</Button>
+        </form>
+        {classError && <p className="mt-3 text-sm text-destructive" role="alert">{classError}</p>}
+        {classesError ? (
+          <div className="mt-3 flex items-center gap-3 text-sm text-destructive" role="alert">
+            <span>Could not load classes.</span><Button type="button" variant="outline" size="sm" onClick={() => refetchClasses()}>Retry</Button>
+          </div>
+        ) : classes.length > 0 ? (
+          <ul className="mt-4 flex flex-wrap gap-2">
+            {classes.map((item) => <li key={item.id} className="rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs font-medium">{item.name}</li>)}
+          </ul>
+        ) : <p className="mt-3 text-sm text-muted-foreground">No classes have been created yet.</p>}
+      </Panel>
+
+      {isError && (
+        <div className="surface flex flex-wrap items-center justify-between gap-3 p-4" role="alert">
+          <p className="text-sm text-destructive">Could not load roster counts: {error.message}</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+        </div>
+      )}
+
       <Panel
         icon={Sparkles}
-        title="Demo Mode"
-        description="The prototype ships with a built-in RFID simulator."
+        title="Connected data"
+        description="Roster, sessions, and attendance are loaded from the Flask API and stored in SQLite."
       >
         <div className={cn("rounded-xl border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground")}>
-          Every scanner has a <span className="font-semibold text-foreground">Simulate RFID Scan</span> button and an{" "}
-          <span className="font-semibold text-foreground">RFID Simulator</span> menu so a successful scan, a duplicate, an
-          unknown card, a card assignment, a reassignment and an offline reader can all be demonstrated without physical
-          hardware.
+          Attendance is recorded when a physical card is read by the configured USB RFID reader. Card assignment also waits for a physical card scan.
         </div>
       </Panel>
     </div>

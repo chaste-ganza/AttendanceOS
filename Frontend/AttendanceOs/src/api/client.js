@@ -1,103 +1,39 @@
-const USERS = "attendance_users";
-const SESSION = "attendance_session";
-const RESETS = "attendance_resets";
-const DEV_OTP = "123456"; // verification code for local development
-const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const apiError = (message, status, payload) => Object.assign(new Error(message), { status, payload });
+let signedInUser = null;
 
-const read = (key, fallback) => {
+async function request(path, { method = "GET", body, signal } = {}) {
+  let response;
   try {
-    return JSON.parse(localStorage.getItem(key)) ?? fallback;
-  } catch {
-    return fallback;
+    response = await fetch(path, {
+      method,
+      credentials: "same-origin",
+      headers: body === undefined ? { Accept: "application/json" } : {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    throw apiError("Could not reach the AttendanceOS API. Check the server connection and try again.", 0);
   }
-};
-const write = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-const fail = (message, status) => Object.assign(new Error(message), { status });
 
-const formatLocalDate = (date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw apiError(payload.error || payload.message || `Request failed (${response.status}).`, response.status, payload);
+  }
+  return payload;
+}
 
-const addDays = (date, days) => {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return formatLocalDate(result);
+const withQuery = (path, values = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(values).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") params.set(key, value);
+  });
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 };
-
-const today = new Date();
-const todayDate = formatLocalDate(today);
-const todayWeekday = WEEKDAYS[today.getDay()];
-const demoSlots = [
-  { id: "slot-monday", day_of_week: "monday", class_name: "CS Year 3", subject: "Database Systems", teacher_name: "Jordan Lee", room: "Lab 2", start_time: "09:00", end_time: "10:30", accent: "violet" },
-  { id: "slot-tuesday", day_of_week: "tuesday", class_name: "CS Year 3", subject: "Network Security", teacher_name: "Morgan Taylor", room: "Room 104", start_time: "10:00", end_time: "11:30", accent: "amber" },
-  { id: "slot-wednesday", day_of_week: "wednesday", class_name: "CS Year 3", subject: "Software Engineering", teacher_name: "Jordan Lee", room: "Lab 2", start_time: "13:00", end_time: "14:30", accent: "sky" },
-  { id: "slot-thursday", day_of_week: "thursday", class_name: "CS Year 3", subject: "Cloud Computing", teacher_name: "Morgan Taylor", room: "Room 208", start_time: "09:30", end_time: "11:00", accent: "rose" },
-  { id: "slot-friday", day_of_week: "friday", class_name: "CS Year 3", subject: "Data Structures", teacher_name: "Jordan Lee", room: "Lab 1", start_time: "11:00", end_time: "12:30", accent: "violet" },
-  { id: "slot-monday-2", day_of_week: "monday", class_name: "CS Year 3", subject: "Discrete Mathematics", teacher_name: "Morgan Taylor", room: "Room 102", start_time: "10:15", end_time: "12:15", accent: "teal" },
-  { id: "slot-tuesday-2", day_of_week: "tuesday", class_name: "CS Year 3", subject: "Operating Systems", teacher_name: "Jordan Lee", room: "Room 101", start_time: "14:00", end_time: "16:00", accent: "indigo" },
-  { id: "slot-wednesday-2", day_of_week: "wednesday", class_name: "CS Year 3", subject: "Computer Networks", teacher_name: "Morgan Taylor", room: "Lab 3", start_time: "16:30", end_time: "18:30", accent: "emerald" },
-  { id: "slot-thursday-2", day_of_week: "thursday", class_name: "CS Year 3", subject: "Statistics for Computing", teacher_name: "Jordan Lee", room: "Room 103", start_time: "13:00", end_time: "15:00", accent: "teal" },
-  { id: "slot-friday-2", day_of_week: "friday", class_name: "CS Year 3", subject: "Database Systems Lab", teacher_name: "Morgan Taylor", room: "Lab 1", start_time: "10:15", end_time: "12:15", accent: "indigo" },
-];
-const todaySlot = demoSlots.find((slot) => slot.day_of_week === todayWeekday) || demoSlots[0];
-const demoStudents = [
-  { id: "student-001", student_code: "AS-2026-001", full_name: "Alex Morgan", class_name: "CS Year 3", rfid_uid: "04:A1:B2:C3:D4" },
-  { id: "student-002", student_code: "AS-2026-002", full_name: "Jamie Rivera", class_name: "CS Year 3", rfid_uid: "04:A1:B2:C5:E6" },
-  { id: "student-003", student_code: "AS-2026-003", full_name: "Taylor Kim", class_name: "CS Year 3", rfid_uid: "04:A1:B2:C7:F8" },
-  { id: "student-004", student_code: "AS-2026-004", full_name: "Casey Patel", class_name: "CS Year 3", rfid_uid: "04:A1:B2:C9:A0" },
-  { id: "student-005", student_code: "AS-2026-005", full_name: "Riley Chen", class_name: "CS Year 3", rfid_uid: "" },
-  { id: "student-006", student_code: "AS-2026-006", full_name: "Drew Wilson", class_name: "CS Year 3", rfid_uid: "" },
-];
-const demoSessions = [
-  {
-    id: "session-today",
-    class_name: todaySlot.class_name,
-    subject: todaySlot.subject,
-    teacher_name: todaySlot.teacher_name,
-    room: todaySlot.room,
-    date: todayDate,
-    start_time: todaySlot.start_time,
-    end_time: todaySlot.end_time,
-    status: "scheduled",
-    slot_id: todaySlot.id,
-  },
-  {
-    id: "session-yesterday",
-    class_name: "CS Year 3",
-    subject: "Algorithms",
-    teacher_name: "Jordan Lee",
-    room: "Lab 2",
-    date: addDays(today, -1),
-    start_time: "09:00",
-    end_time: "10:30",
-    status: "completed",
-    slot_id: "",
-  },
-];
-const demoAttendance = demoStudents.slice(0, 4).map((student, index) => ({
-  id: `attendance-demo-${index + 1}`,
-  session_id: "session-yesterday",
-  student_id: student.id,
-  rfid_uid: student.rfid_uid,
-  status: "present",
-  recorded_at: new Date(`${addDays(today, -1)}T09:15:00`).toISOString(),
-  method: "rfid",
-}));
-const DEMO_DATA = {
-  Student: demoStudents,
-  Session: demoSessions,
-  Attendance: demoAttendance,
-  TimetableSlot: demoSlots,
-};
-
-const publicUser = (u) => ({
-  id: u.id,
-  email: u.email,
-  full_name: u.full_name || u.email.split("@")[0],
-});
 
 const sortRows = (rows, sort) => {
   if (!sort) return rows;
@@ -109,51 +45,195 @@ const sortRows = (rows, sort) => {
     if (x === y) return 0;
     if (x == null) return 1;
     if (y == null) return -1;
-    const c =
-      typeof x === "number" && typeof y === "number"
-        ? x - y
-        : String(x).localeCompare(String(y));
-    return desc ? -c : c;
+    const compare = typeof x === "number" && typeof y === "number"
+      ? x - y
+      : String(x).localeCompare(String(y));
+    return desc ? -compare : compare;
   });
 };
 
-const entity = (name) => {
-  const key = `attendance_${name}`;
-  const all = () => read(key, DEMO_DATA[name] || []);
+const normalizeStudent = (student) => ({
+  ...student,
+  id: String(student.id),
+  student_code: student.registration_number,
+  full_name: student.full_name || `${student.first_name || ""} ${student.last_name || ""}`.trim(),
+  rfid_uid: student.rfid_uid || "",
+});
+
+const normalizeSession = (session) => ({
+  ...session,
+  id: String(session.id),
+  date: session.session_date,
+  subject: session.subject_name || "Untitled session",
+  status: String(session.status || "SCHEDULED").toLowerCase(),
+  opened_at: session.opened_at,
+  slot_id: session.slot_id == null ? "" : String(session.slot_id),
+});
+
+const normalizeAttendance = (record) => ({
+  ...record,
+  id: String(record.id),
+  session_id: String(record.session_id),
+  student_id: String(record.student_id),
+  recorded_at: record.attendance_time,
+  method: "rfid",
+});
+
+const normalizeSlot = (slot) => ({ ...slot, id: String(slot.id) });
+
+async function loadList(path, key, normalize, sort, limit) {
+  const payload = await request(path);
+  let rows = (payload[key] || []).map(normalize);
+  rows = sortRows(rows, sort);
+  return limit ? rows.slice(0, limit) : rows;
+}
+
+async function getClasses() {
+  const { classes = [] } = await request("/api/classes");
+  return classes;
+}
+
+async function getSubjects() {
+  const { subjects = [] } = await request("/api/subjects");
+  return subjects;
+}
+
+async function subjectIdFor(data) {
+  if (data.subject_id) return Number(data.subject_id);
+  const name = (data.subject || data.subject_name || "").trim();
+  if (!name) throw apiError("A subject is required.", 400);
+  const subjects = await getSubjects();
+  const existing = subjects.find((subject) => subject.name.toLowerCase() === name.toLowerCase());
+  if (existing) return existing.id;
+  const created = await request("/api/subjects", { method: "POST", body: { name } });
+  return created.subject.id;
+}
+
+async function classIdFor(data) {
+  if (data.class_id) return Number(data.class_id);
+  const name = (data.class_name || "").trim();
+  const classes = await getClasses();
+  const existing = classes.find((item) => item.name.toLowerCase() === name.toLowerCase());
+  if (!existing) throw apiError(name ? `Class “${name}” is not in the database. Create the class first.` : "Choose a class.", 400);
+  return existing.id;
+}
+
+async function sessionPayload(data) {
+  const payload = {};
+  if (data.class_id !== undefined || data.class_name !== undefined) payload.class_id = await classIdFor(data);
+  if (data.subject_id !== undefined || data.subject !== undefined || data.subject_name !== undefined) {
+    payload.subject_id = await subjectIdFor(data);
+  }
+  const teacher = api.auth.currentUser();
+  payload.teacher_id = data.teacher_id || teacher?.id || null;
+  for (const [from, to] of [
+    ["date", "session_date"], ["session_date", "session_date"],
+    ["start_time", "start_time"], ["end_time", "end_time"],
+    ["room", "room"], ["slot_id", "slot_id"],
+  ]) {
+    if (data[from] !== undefined) payload[to] = data[from] === "" ? null : data[from];
+  }
+  return payload;
+}
+
+function entity(name) {
+  const config = {
+    Student: { path: "/api/students", key: "students", normalize: normalizeStudent },
+    Session: { path: "/api/sessions", key: "sessions", normalize: normalizeSession },
+    Attendance: { path: "/api/attendance", key: "attendance", normalize: normalizeAttendance },
+    TimetableSlot: { path: "/api/timetable-slots", key: "slots", normalize: normalizeSlot },
+  }[name];
+
   return {
     async list(sort, limit) {
-      const rows = sortRows(all(), sort);
-      return limit ? rows.slice(0, limit) : rows;
+      return loadList(config.path, config.key, config.normalize, sort, limit);
     },
     async filter(query = {}, sort, limit) {
-      const rows = sortRows(
-        all().filter((r) => Object.entries(query).every(([k, v]) => r[k] === v)),
-        sort
-      );
+      const params = {};
+      if (name === "Student") {
+        params.class_id = query.class_id;
+        params.status = query.status;
+        if (query.rfid_uid !== undefined) params.has_card = Boolean(query.rfid_uid);
+      } else if (name === "Session") {
+        params.class_id = query.class_id;
+        params.status = query.status ? query.status.toUpperCase() : undefined;
+        params.date = query.date;
+      } else if (name === "Attendance") {
+        params.session_id = query.session_id;
+        params.student_id = query.student_id;
+      }
+      const payload = await request(withQuery(config.path, params));
+      let rows = (payload[config.key] || []).map(config.normalize);
+      rows = rows.filter((row) => Object.entries(query).every(([key, value]) => row[key] === value));
+      rows = sortRows(rows, sort);
       return limit ? rows.slice(0, limit) : rows;
     },
     async create(data) {
-      const row = { ...data, id: crypto.randomUUID(), created_date: new Date().toISOString() };
-      write(key, [...all(), row]);
-      return row;
+      if (name === "Attendance") {
+        throw apiError("Attendance is recorded by the connected RFID reader.", 405);
+      }
+      let path = config.path;
+      let body = data;
+      if (name === "Student") {
+        const names = data.full_name ? data.full_name.trim().split(/\s+/) : [];
+        const firstName = data.first_name || names.shift() || "";
+        const lastName = data.last_name || names.join(" ");
+        body = {
+          first_name: firstName,
+          last_name: lastName,
+          registration_number: data.registration_number || data.student_code,
+          class_id: data.class_id || null,
+          rfid_uid: data.rfid_uid || null,
+        };
+      } else if (name === "Session") {
+        body = await sessionPayload(data);
+      } else if (name === "TimetableSlot") {
+        const classes = await getClasses();
+        const classRow = classes.find((item) => item.name.toLowerCase() === (data.class_name || "").toLowerCase());
+        if (!classRow) throw apiError("Choose an existing class before saving this timetable slot.", 400);
+        body = {
+          ...data,
+          class_id: data.class_id || classRow.id,
+          subject_id: await subjectIdFor(data),
+          teacher_id: data.teacher_id || api.auth.currentUser()?.id || null,
+        };
+      }
+      const payload = await request(path, { method: "POST", body });
+      const item = payload[name === "Student" ? "student" : name === "Session" ? "session" : "slot"];
+      return config.normalize(item);
     },
     async bulkCreate(items) {
-      return Promise.all(items.map((i) => this.create(i)));
+      return Promise.all(items.map((item) => this.create(item)));
     },
     async update(id, data) {
-      const rows = all();
-      const i = rows.findIndex((r) => r.id === id);
-      if (i === -1) throw fail(`${name} not found`, 404);
-      rows[i] = { ...rows[i], ...data };
-      write(key, rows);
-      return rows[i];
+      if (name === "Attendance") throw apiError("Attendance records cannot be edited from the dashboard.", 405);
+      let body = data;
+      let path = `${config.path}/${id}`;
+      if (name === "Student") {
+        if (Object.hasOwn(data, "rfid_uid")) {
+          if (data.rfid_uid) throw apiError("Use the card assignment workflow to assign an RFID card.", 405);
+          const { student } = await request("/api/cards/unassign", { method: "POST", body: { student_id: Number(id) } });
+          return normalizeStudent(student);
+        }
+        body = { ...data };
+        if (data.student_code !== undefined) body.registration_number = data.student_code;
+        delete body.student_code;
+        delete body.full_name;
+      } else if (name === "Session") {
+        body = await sessionPayload(data);
+      } else if (name === "TimetableSlot") {
+        if (data.subject !== undefined && data.subject_id === undefined) body = { ...data, subject_id: await subjectIdFor(data) };
+      }
+      const payload = await request(path, { method: "PATCH", body });
+      return config.normalize(payload[name === "Student" ? "student" : name === "Session" ? "session" : "slot"]);
     },
     async delete(id) {
-      write(key, all().filter((r) => r.id !== id));
-      return { id };
+      if (name === "Attendance") throw apiError("Attendance records are historical and cannot be deleted here.", 405);
+      const payload = await request(`${config.path}/${id}`, { method: "DELETE" });
+      return { id, ...payload };
     },
   };
-};
+}
 
 export const api = {
   entities: {
@@ -164,78 +244,81 @@ export const api = {
   },
 
   auth: {
+    currentUser: () => signedInUser,
+    async me() {
+      try {
+        const payload = await request("/api/auth/me");
+        signedInUser = payload.user;
+        return signedInUser;
+      } catch (error) {
+        if (error.status === 401) signedInUser = null;
+        throw error;
+      }
+    },
     async register({ email, password, full_name }) {
-      const normalizedEmail = email.trim().toLowerCase();
-      if (!normalizedEmail || !password) throw fail("Email and password are required", 400);
-      const users = read(USERS, []);
-      const existing = users.find((u) => u.email === normalizedEmail);
-      if (existing?.verified) throw fail("Email already registered", 409);
-      const user = { id: existing?.id || crypto.randomUUID(), email: normalizedEmail, password, full_name, verified: false };
-      write(USERS, [...users.filter((u) => u.email !== normalizedEmail), user]);
-      return { verificationCode: DEV_OTP };
-    },
-    async verifyOtp({ email, otpCode }) {
-      const users = read(USERS, []);
-      const user = users.find((u) => u.email === email);
-      if (!user) throw fail("Account not found", 404);
-      if (String(otpCode) !== DEV_OTP) throw fail("Invalid verification code", 400);
-      write(USERS, users.map((u) => (u.id === user.id ? { ...u, verified: true } : u)));
-      return { access_token: user.id };
-    },
-    async resendOtp(email) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const user = read(USERS, []).find((item) => item.email === normalizedEmail && !item.verified);
-      if (!user) throw fail("No pending verification was found for this email", 404);
-      return { verificationCode: DEV_OTP };
-    },
-    setToken(token) {
-      const user = read(USERS, []).find((u) => u.id === token);
-      if (user) write(SESSION, publicUser(user));
-    },
-    currentUser() {
-      return read(SESSION, null);
+      const payload = await request("/api/auth/register", {
+        method: "POST", body: { email, password, full_name },
+      });
+      signedInUser = payload.user;
+      return payload.user;
     },
     async loginViaEmailPassword(email, password) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const user = read(USERS, []).find(
-        (u) => u.email === normalizedEmail && u.password === password && u.verified === true
-      );
-      if (!user) throw fail("Invalid email or password", 401);
-      write(SESSION, publicUser(user));
-      return publicUser(user);
+      const payload = await request("/api/auth/login", {
+        method: "POST", body: { email, password },
+      });
+      signedInUser = payload.user;
+      return signedInUser;
     },
-    async loginWithProvider(provider) {
-      throw fail(`${provider} sign-in requires a configured server-side OAuth provider`, 501);
-    },
-    async me() {
-      const session = this.currentUser();
-      if (!session) throw fail("Not authenticated", 401);
-      return session;
-    },
-    logout() {
-      localStorage.removeItem(SESSION);
-    },
-    isLoggedIn() {
-      return !!read(SESSION, null);
+    async logout() {
+      await request("/api/auth/logout", { method: "POST" });
+      signedInUser = null;
     },
     async resetPasswordRequest(email) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const userExists = read(USERS, []).some((user) => user.email === normalizedEmail);
-      if (!userExists) return {};
-      const token = crypto.randomUUID();
-      write(RESETS, { ...read(RESETS, {}), [token]: normalizedEmail });
-      const resetUrl = new URL("/reset-password", window.location.origin);
-      resetUrl.searchParams.set("token", token);
-      return { resetUrl: resetUrl.toString() };
+      return request("/api/auth/password-reset", { method: "POST", body: { email } });
     },
     async resetPassword({ resetToken, newPassword }) {
-      const resets = read(RESETS, {});
-      const email = resets[resetToken];
-      if (!email) throw fail("Invalid or expired reset link", 400);
-      write(USERS, read(USERS, []).map((u) => (u.email === email ? { ...u, password: newPassword } : u)));
-      delete resets[resetToken];
-      write(RESETS, resets);
-      return {};
+      return request("/api/auth/password-reset/complete", {
+        method: "POST", body: { reset_token: resetToken, new_password: newPassword },
+      });
     },
   },
+
+  classes: {
+    async list() { return (await request("/api/classes")).classes || []; },
+    async create(data) { return (await request("/api/classes", { method: "POST", body: data })).class; },
+    async update(id, data) { return (await request(`/api/classes/${id}`, { method: "PATCH", body: data })).class; },
+    async delete(id) { return request(`/api/classes/${id}`, { method: "DELETE" }); },
+  },
+
+  cards: {
+    async list() {
+      const payload = await request("/api/cards");
+      return {
+        with_cards: (payload.with_cards || []).map(normalizeStudent),
+        without_cards: (payload.without_cards || []).map(normalizeStudent),
+      };
+    },
+    async assign(student_id, timeout = 30) {
+      return request("/api/cards/assign", { method: "POST", body: { student_id: Number(student_id), timeout } });
+    },
+    async check(student_id, uid) {
+      return request("/api/cards/check", { method: "POST", body: { student_id: Number(student_id), uid } });
+    },
+    async confirm(student_id, uid) {
+      const payload = await request("/api/cards/confirm", { method: "POST", body: { student_id: Number(student_id), uid } });
+      return { ...payload, student: payload.student ? normalizeStudent(payload.student) : null };
+    },
+    async cancel() { return request("/api/cards/cancel", { method: "POST", body: {} }); },
+    async unassign(student_id) {
+      const payload = await request("/api/cards/unassign", { method: "POST", body: { student_id: Number(student_id) } });
+      return { ...payload, student: payload.student ? normalizeStudent(payload.student) : null };
+    },
+  },
+
+  reader: {
+    async status() { return (await request("/api/health")).reader; },
+    async scanResult() { return request("/api/scan-result?clear=1"); },
+  },
+
+  request,
 };

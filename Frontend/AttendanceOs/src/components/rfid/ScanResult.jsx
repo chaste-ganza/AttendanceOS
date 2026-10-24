@@ -134,6 +134,34 @@ export default function ScanResult({ view, result, onManageCard, onOpenSession, 
           </Shell>
         )}
 
+        {view === "wrong-class" && (
+          <Shell
+            tone="warning"
+            icon={<AlertTriangle className="h-6 w-6" />}
+            iconClass="bg-amber-500/15 text-amber-600 dark:text-amber-300"
+            title="Student Not in This Class"
+            subtitle="No attendance was recorded."
+          >
+            <p className="text-sm text-muted-foreground">{result?.message || "The card belongs to a student assigned to another class."}</p>
+            <div className="mt-3 rounded-xl border border-border/60 bg-card/80 px-3 py-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Detected UID</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">{result?.uid || "—"}</p>
+            </div>
+          </Shell>
+        )}
+
+        {view === "error" && (
+          <Shell
+            tone="danger"
+            icon={<AlertTriangle className="h-6 w-6" />}
+            iconClass="bg-rose-500/15 text-rose-600 dark:text-rose-300"
+            title="Scan Service Unavailable"
+            subtitle="Attendance status could not be checked."
+          >
+            <p className="text-sm text-muted-foreground">{result?.message || "Check the server connection and refresh this page."}</p>
+          </Shell>
+        )}
+
         {view === "closed" && (
           <Shell
             tone="neutral"
