@@ -1,92 +1,67 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@/api/client";
+import { useCallback, useMemo, useState } from "react";
 
-const initial = { state: "idle", result: null, busy: false };
+const OUTCOME_STATE = {
+  SUCCESS: "success",
+  DUPLICATE: "duplicate",
+  UNKNOWN_CARD: "unknown",
+  WRONG_CLASS: "wrong-class",
+  NO_OPEN_SESSION: "closed",
+  ERROR: "error",
+};
 
-export default function useAttendanceScanner({ session, students = [], records = [], onRecorded }) {
-  const [state, setState] = useState(initial.state);
-  const [result, setResult] = useState(initial.result);
-  const [busy, setBusy] = useState(initial.busy);
-  const lastScanRef = useRef(null);
+const IDLE = { state: "idle", result: null };
 
-  const reset = useCallback(() => {
-    setState("idle");
-    setResult(null);
-  }, []);
+/**
+ * Turns the reader provider's latest scan into the visual state used by the
+ * session page. Scans arrive from the browser's own serial connection, so
+ * there is nothing to poll: each scan is recorded once by the provider and
+ * surfaced here from `lastScan`, which is why the state is derived instead of
+ * copied into an effect.
+ */
+export default function useAttendanceScanner({ session, lastScan }) {
+  const [dismissedId, setDismissedId] = useState(null);
 
-  useEffect(() => {
-    if (!session || session.status !== "open") {
-      return undefined;
+  const scanView = useMemo(() => {
+    if (!lastScan || lastScan.id === dismissedId) return null;
+
+    if (lastScan.error) {
+      return { state: "error", result: { uid: lastScan.uid, message: lastScan.error } };
     }
 
-    let active = true;
-    let inFlight = false;
+    const scan = lastScan.result;
+    if (!scan) return null;
 
-    const poll = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      setBusy(true);
-      try {
-        const scan = await api.reader.scanResult();
-        if (!active || scan.outcome === "IDLE" || !scan.last_scan_at) return;
-        const scanKey = `${scan.last_scan_at}:${scan.uid || ""}:${scan.outcome}`;
-        if (lastScanRef.current === scanKey) return;
-        lastScanRef.current = scanKey;
-        if (scan.session_id != null && String(scan.session_id) !== String(session.id)) return;
+    // The provider records taps from wherever the teacher is; only show
+    // results that belong to the session on screen.
+    if (scan.session_id != null && String(scan.session_id) !== String(session?.id)) return null;
+    if (scan.outcome === "NO_OPEN_SESSION" && session?.status === "open") return null;
 
-        const student = students.find((item) => String(item.id) === String(scan.student_id)) || null;
-        const time = scan.attendance_time || scan.last_scan_at;
-        let record = records.find((item) =>
-          String(item.session_id) === String(session.id) && String(item.student_id) === String(scan.student_id)
-        ) || null;
-
-        if (scan.outcome === "SUCCESS" || scan.outcome === "DUPLICATE") {
-          const allRecords = await api.entities.Attendance.filter({ session_id: session.id });
-          record = allRecords.find((item) => String(item.student_id) === String(scan.student_id)) || record;
-          if (scan.outcome === "SUCCESS" && record) onRecorded?.(record);
-        }
-
-        if (!active) return;
-        const nextState = {
-          SUCCESS: "success",
-          DUPLICATE: "duplicate",
-          UNKNOWN_CARD: "unknown",
-          WRONG_CLASS: "wrong-class",
-          NO_OPEN_SESSION: "closed",
-          ERROR: "error",
-        }[scan.outcome] || "error";
-        setState(nextState);
-        setResult({
-          uid: scan.uid,
-          student,
-          time: record?.recorded_at || time,
-          record,
-          message: scan.message,
-        });
-      } catch (requestError) {
-        if (active) {
-          setState("error");
-          setResult({ message: requestError.message });
-        }
-      } finally {
-        inFlight = false;
-        if (active) setBusy(false);
-      }
+    return {
+      state: OUTCOME_STATE[scan.outcome] ?? "error",
+      result: {
+        uid: scan.uid,
+        student_id: scan.student_id,
+        student: scan.student_id
+          ? {
+              id: String(scan.student_id),
+              full_name: scan.full_name || "",
+              student_code: scan.registration_number || "",
+            }
+          : null,
+        time: scan.attendance_time,
+        message: scan.message,
+        session_id: scan.session_id,
+      },
     };
+  }, [lastScan, dismissedId, session]);
 
-    poll();
-    const timer = window.setInterval(poll, 1000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [session, students, records, onRecorded]);
+  const reset = useCallback(() => {
+    setDismissedId(lastScan?.id ?? null);
+  }, [lastScan]);
 
-  const sessionOpen = Boolean(session && session.status === "open");
   return {
-    state: sessionOpen ? state : "idle",
-    result: sessionOpen ? result : null,
-    busy: sessionOpen && busy,
+    state: scanView?.state ?? IDLE.state,
+    result: scanView?.result ?? IDLE.result,
     reset,
   };
 }

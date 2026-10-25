@@ -94,17 +94,47 @@ export function StepSelect({ students, query, onQuery, onPick }) {
   );
 }
 
-export function StepScan({ student, scanning, uid, onScan, onConfirm, onRescan, onBack }) {
+export function StepScan({
+  student,
+  scanning,
+  uid,
+  error,
+  supported = true,
+  readerConnected = false,
+  connecting = false,
+  onScan,
+  onConfirm,
+  onRescan,
+  onBack,
+}) {
   return (
     <div className="space-y-4">
       <StudentChip student={student} />
       <ScanVisual
         state={scanning ? "scanning" : uid ? "success" : "idle"}
-        isOnline
+        isOnline={readerConnected}
         compact
         label={scanning ? "Reading card…" : uid ? "Card detected" : "Place RFID card on reader"}
-        caption={uid ? "UID captured · READER-01" : "READER-01 · awaiting card"}
+        caption={
+          uid
+            ? "UID captured from your reader"
+            : readerConnected
+              ? "USB reader · awaiting card"
+              : "Reader not connected"
+        }
       />
+
+      {error && (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!supported && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 text-sm text-amber-700 dark:text-amber-300" role="alert">
+          This browser cannot open USB readers. Use Chrome or Edge on a desktop computer.
+        </p>
+      )}
 
       {uid ? (
         <>
@@ -129,12 +159,20 @@ export function StepScan({ student, scanning, uid, onScan, onConfirm, onRescan, 
       ) : (
         <>
           <p className="text-center text-sm text-muted-foreground">
-            Place the RFID card on READER-01 to read its UID.
+            {readerConnected
+              ? "Place the card on your USB reader to read its UID."
+              : "Your reader is opened by the browser — no server or cable sharing needed."}
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Button className="flex-1" onClick={onScan} disabled={scanning}>
+            <Button className="flex-1" onClick={onScan} disabled={scanning || connecting || !supported}>
               <ScanLine className="mr-2 h-4 w-4" />
-              {scanning ? "Waiting for reader…" : "Start card scan"}
+              {connecting
+                ? "Connecting…"
+                : scanning
+                  ? "Waiting for card…"
+                  : readerConnected
+                    ? "Start card scan"
+                    : "Connect reader & scan"}
             </Button>
           </div>
         </>

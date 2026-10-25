@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CreditCard, Plus, Radio, RefreshCw, Search, WifiOff, UserPlus } from "lucide-react";
+import { CreditCard, Plus, Radio, Search, WifiOff, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StatusBadge from "@/components/common/StatusBadge";
@@ -27,7 +27,7 @@ const CARD_NONE =
 
 export default function RfidCards() {
   const navigate = useNavigate();
-  const { isOnline, readerPort, error: readerError, refresh: refreshReader } = useReader();
+  const { supported, connected, connecting, portLabel, error: readerError, connect, disconnect } = useReader();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data, isError, refetch } = useQuery({
     queryKey: ["classroom"],
@@ -94,21 +94,25 @@ export default function RfidCards() {
       <div
         className={cn(
           "surface flex flex-wrap items-center gap-4 p-4",
-          !isOnline && "border-rose-500/30 bg-rose-500/[0.04]"
+          !connected && "border-rose-500/30 bg-rose-500/[0.04]"
         )}
       >
         <div
           className={cn(
             "flex h-11 w-11 items-center justify-center rounded-xl",
-            isOnline ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-300" : "bg-rose-500/12 text-rose-600 dark:text-rose-300"
+            connected ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-300" : "bg-rose-500/12 text-rose-600 dark:text-rose-300"
           )}
         >
-          {isOnline ? <Radio className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
+          {connected ? <Radio className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
         </div>
         <div className="mr-auto">
-          <p className="font-heading text-sm font-bold tracking-tight">RFID reader{readerPort ? ` · ${readerPort}` : ""}</p>
-          <p className={cn("text-xs font-medium", isOnline ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300")}>
-            {isOnline ? "🟢 Reader Online — ready to read cards" : "🔴 Reader Offline — card scanning unavailable"}
+          <p className="font-heading text-sm font-bold tracking-tight">RFID reader{portLabel ? ` · ${portLabel}` : ""}</p>
+          <p className={cn("text-xs font-medium", connected ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300")}>
+            {connected
+              ? "🟢 Reader connected on this computer — ready to read cards"
+              : supported
+                ? "🔴 No reader connected — plug in your USB reader"
+                : "⚠️ This browser cannot open USB readers — use Chrome or Edge"}
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold">
@@ -119,10 +123,17 @@ export default function RfidCards() {
             {counts.withoutCard} without card
           </span>
         </div>
-        <Button variant="outline" size="sm" onClick={refreshReader}>
-          <RefreshCw className="mr-2 h-3.5 w-3.5" />
-          Refresh status
-        </Button>
+        {connected ? (
+          <Button variant="outline" size="sm" onClick={disconnect}>
+            <WifiOff className="mr-2 h-3.5 w-3.5" />
+            Disconnect
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" onClick={connect} disabled={!supported || connecting}>
+            <Radio className="mr-2 h-3.5 w-3.5" />
+            {connecting ? "Connecting…" : "Connect reader"}
+          </Button>
+        )}
         {readerError && <p className="w-full text-xs text-destructive" role="status">{readerError.message}</p>}
       </div>
 

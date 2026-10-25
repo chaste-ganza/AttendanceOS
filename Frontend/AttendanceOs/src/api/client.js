@@ -298,9 +298,6 @@ export const api = {
         without_cards: (payload.without_cards || []).map(normalizeStudent),
       };
     },
-    async assign(student_id, timeout = 30) {
-      return request("/api/cards/assign", { method: "POST", body: { student_id: Number(student_id), timeout } });
-    },
     async check(student_id, uid) {
       return request("/api/cards/check", { method: "POST", body: { student_id: Number(student_id), uid } });
     },
@@ -315,9 +312,11 @@ export const api = {
     },
   },
 
-  reader: {
-    async status() { return (await request("/api/health")).reader; },
-    async scanResult() { return request("/api/scan-result?clear=1"); },
+  scans: {
+    /** Record a UID read by the teacher's own reader (Web Serial). */
+    async record(uid) {
+      return request("/api/scan", { method: "POST", body: { uid } });
+    },
   },
 
   request,

@@ -32,7 +32,7 @@ function Panel({ icon: Icon, title, description, children }) {
 
 export default function Settings() {
   const user = useCurrentUser();
-  const { isOnline, readerPort, error: readerError, refresh: refreshReader } = useReader();
+  const { supported, connected, connecting, portLabel, error: readerError, connect, disconnect } = useReader();
   const { setTheme, theme } = useTheme();
   const { data, isPending, isError, error, refetch } = useQuery({ queryKey: ["classroom"], queryFn: loadClassroom });
   const queryClient = useQueryClient();
@@ -79,23 +79,44 @@ export default function Settings() {
           </div>
         </Panel>
 
-        <Panel icon={Radio} title="RFID Reader" description="Status reported by the Flask reader service.">
+        <Panel
+          icon={Radio}
+          title="RFID Reader"
+          description="Opened by this browser over USB — the reader stays on your own computer."
+        >
           <div className="space-y-3">
             <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/40 px-4 py-3">
               <div>
-                <p className="text-sm font-semibold">{isOnline ? "🟢 Reader Online" : "🔴 Reader Offline"}</p>
-                <p className="text-xs text-muted-foreground">{readerPort || "No serial device configured"}</p>
+                <p className="text-sm font-semibold">
+                  {connected
+                    ? "🟢 Reader connected"
+                    : supported
+                      ? "🔴 Reader not connected"
+                      : "⚠️ Web Serial unavailable"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {connected
+                    ? portLabel || "USB device"
+                    : supported
+                      ? "Plug in your own RFID reader and connect it."
+                      : "Use Chrome or Edge on a desktop computer."}
+                </p>
               </div>
-              {isOnline ? <Radio className="h-5 w-5 text-emerald-500" /> : <WifiOff className="h-5 w-5 text-rose-500" />}
+              {connected ? <WifiOff className="h-5 w-5 text-rose-500" /> : <Radio className="h-5 w-5 text-rose-500" />}
             </div>
-            <Button variant="outline" className="w-full" onClick={refreshReader}>
-              Refresh reader status
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={connected ? disconnect : connect}
+              disabled={!supported || connecting}
+            >
+              {connected ? "Disconnect reader" : connecting ? "Connecting…" : "Connect reader"}
             </Button>
-            {readerError && <p className="text-sm text-destructive" role="status">{readerError.message}</p>}
+            {readerError && <p className="text-sm text-destructive" role="status">{readerError}</p>}
           </div>
         </Panel>
 
-        <Panel icon={isOnline ? Sun : Moon} title="Appearance" description="Switch between light and dark mode.">
+        <Panel icon={Sun} title="Appearance" description="Switch between light and dark mode.">
           <div className="flex gap-2">
             <Button
               variant={theme === "light" ? "default" : "outline"}

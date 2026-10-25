@@ -4,6 +4,7 @@ import { CreditCard } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StepConfirm, StepConflict, StepScan, StepSelect } from "@/components/cards/AssignCardSteps";
 import { api } from "@/api/client";
+import { useReader } from "@/lib/reader-context";
 
 export default function AssignCardModal({ open, onOpenChange, students, initialStudentId, onAssigned }) {
   const key = `${open}:${initialStudentId || ""}`;
@@ -20,37 +21,52 @@ export default function AssignCardModal({ open, onOpenChange, students, initialS
 }
 
 function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAssigned }) {
+  const { supported, connected, connecting, connect, requestAssignScan, cancelAssign } = useReader();
   const [step, setStep] = useState(initialStudentId ? "scan" : "select");
   const [selectedId, setSelectedId] = useState(initialStudentId || null);
   const [uid, setUid] = useState("");
   const [owner, setOwner] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [scanError, setScanError] = useState("");
   const [query, setQuery] = useState("");
 
   const student = students.find((item) => item.id === selectedId) || null;
+
+  const close = (value) => {
+    if (!value) {
+      cancelAssign();
+      setScanError("");
+    }
+    onOpenChange(value);
+  };
 
   const runScan = async () => {
     if (scanning || !student) return;
     setScanning(true);
     setUid("");
+    setOwner(null);
+    setScanError("");
     setStep("scan");
     try {
-      const response = await api.cards.assign(student.id, 30);
-      const check = response.check;
-      if (response.outcome !== "CARD_SCANNED" || !check) {
-        throw new Error(response.message || "The reader did not return a card UID.");
+      if (!connected) {
+        const opened = await connect();
+        if (!opened) return;
       }
-      const candidate = response.uid;
+      const candidate = await requestAssignScan(30000);
       setUid(candidate);
+
+      const check = await api.cards.check(student.id, candidate);
       if (check.outcome === "OWNED_BY_OTHER") {
-        const ownerId = String(check.current_owner_id);
-        setOwner(students.find((item) => String(item.id) === ownerId) || {
-          id: ownerId,
-          full_name: check.current_owner_name,
-          student_code: check.current_owner_reg,
-          rfid_uid: candidate,
-        });
+        const currentOwnerId = String(check.current_owner_id);
+        setOwner(
+          students.find((item) => String(item.id) === currentOwnerId) || {
+            id: currentOwnerId,
+            full_name: check.current_owner_name,
+            student_code: check.current_owner_reg,
+            rfid_uid: candidate,
+          }
+        );
         setStep("conflict");
       } else if (["UNASSIGNED", "ALREADY_ASSIGNED_SELF"].includes(check.outcome)) {
         setOwner(null);
@@ -59,7 +75,9 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
         throw new Error(check.message || "This student or card cannot be assigned.");
       }
     } catch (error) {
-      toast.error(error.message || "The reader could not scan a card.");
+      const message = error?.message || "The reader could not scan a card.";
+      setScanError(message);
+      toast.error(message);
     } finally {
       setScanning(false);
     }
@@ -74,7 +92,7 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
         description: `${uid} → ${student.full_name}`,
       });
       onAssigned?.();
-      onOpenChange(false);
+      close(false);
     } catch (error) {
       toast.error(error.message || "The card could not be saved. Please try again.");
     } finally {
@@ -90,7 +108,7 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -101,8 +119,8 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
             {step === "select"
               ? "Choose the student this card should belong to."
               : step === "scan"
-              ? "The UID is read directly from the card on READER-01."
-              : "A card can only belong to one student at a time."}
+                ? "The UID is read from the card on your own USB reader."
+                : "A card can only belong to one student at a time."}
           </DialogDescription>
         </DialogHeader>
 
@@ -123,12 +141,17 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
             student={student}
             scanning={scanning}
             uid={uid}
+            error={scanError}
+            supported={supported}
+            readerConnected={connected}
+            connecting={connecting}
             onScan={() => runScan()}
             onConfirm={owner ? () => setStep("confirm") : finish}
-            onRescan={() => runScan("fresh")}
+            onRescan={() => runScan()}
             onBack={() => {
               setUid("");
               setOwner(null);
+              setScanError("");
               setStep("select");
             }}
           />
@@ -139,7 +162,7 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
             student={student}
             owner={owner}
             uid={uid}
-            onCancel={() => onOpenChange(false)}
+            onCancel={() => close(false)}
             onUpdateOwner={() => setStep("confirm")}
           />
         )}
@@ -150,7 +173,7 @@ function AssignCardDialog({ open, onOpenChange, students, initialStudentId, onAs
             owner={owner}
             uid={uid}
             saving={saving}
-            onCancel={() => onOpenChange(false)}
+            onCancel={() => close(false)}
             onConfirm={finish}
           />
         )}
