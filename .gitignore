@@ -41,7 +41,6 @@ coverage.xml
 cover/
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -72,7 +71,6 @@ dmypy.json
 
 # IDEs
 .idea/
-.vscode/
 *.swp
 
 # OS
@@ -81,3 +79,5 @@ Thumbs.db
 branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
+config.bat
+node_modules
