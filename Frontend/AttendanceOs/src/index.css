@@ -34,6 +34,8 @@
 
   --sidebar-background: #FFFFFF;
   --sidebar-foreground: #111827;
+  --sidebar-heading: #0B1120;
+  --sidebar-muted: #4B5563;
   --sidebar-primary: #5048E5;
   --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: #F3F4F6;
@@ -79,6 +81,8 @@
 
   --sidebar-background: #0F1729;
   --sidebar-foreground: #A6B5CA;
+  --sidebar-heading: #FDE68A;
+  --sidebar-muted: #A6B5CA;
   --sidebar-primary: #5048E5;
   --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: #1A243D;
