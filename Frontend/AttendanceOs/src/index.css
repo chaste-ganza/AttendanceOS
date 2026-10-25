@@ -14,7 +14,7 @@
   --secondary: #F3F4F7;
   --secondary-foreground: #0F1729;
   --muted: #F3F4F7;
-  --muted-foreground: #677183;
+  --muted-foreground: #4B5563;
   --accent: #EDECFE;
   --accent-foreground: #262183;
   --destructive: #DC2828;
@@ -32,13 +32,15 @@
   --chart-4: #FBBE23;
   --chart-5: #E23670;
 
-  --sidebar-background: #0F1729;
-  --sidebar-foreground: #A6B5CA;
+  --sidebar-background: #FFFFFF;
+  --sidebar-foreground: #111827;
+  --sidebar-heading: #0B1120;
+  --sidebar-muted: #4B5563;
   --sidebar-primary: #5048E5;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #1A243D;
-  --sidebar-accent-foreground: #FFFFFF;
-  --sidebar-border: #1C273F;
+  --sidebar-accent: #F3F4F6;
+  --sidebar-accent-foreground: #111827;
+  --sidebar-border: #E5E7EB;
   --sidebar-ring: #5048E5;
 
   --font-heading: "Plus Jakarta Sans", sans-serif;
@@ -76,6 +78,17 @@
   --chart-3: #35B7F3;
   --chart-4: #FBC641;
   --chart-5: #E75586;
+
+  --sidebar-background: #0F1729;
+  --sidebar-foreground: #A6B5CA;
+  --sidebar-heading: #FDE68A;
+  --sidebar-muted: #A6B5CA;
+  --sidebar-primary: #5048E5;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #1A243D;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: #1C273F;
+  --sidebar-ring: #5048E5;
 }
 
 @layer base {

@@ -10,7 +10,7 @@ From the repository root, start the frontend, Flask API, and Nginx gateway:
 docker compose up --build -d
 ```
 
-Open <http://localhost:8080>, create a teacher account, and create the initial classes, students, and timetable entries. The SQLite database is kept in the `attendance_data` volume. See [DEPLOYMENT.md](../../DEPLOYMENT.md) for the optional RFID reader and configuration.
+Open <http://localhost:8080>, create a teacher account, and create the initial classes, students, and timetable entries. The SQLite database is kept in the `attendance_data` volume. See [DEPLOYMENT.md](../../DEPLOYMENT.md) for connecting your own RFID reader and for configuration.
 
 ## Run the frontend in Vite development mode
 
@@ -31,7 +31,7 @@ Set a stable, secret `FLASK_SECRET_KEY` for deployments so signed login cookies 
 
 ## RFID reader
 
-Without a configured physical reader, the API reports the reader as offline. Attendance scans and card assignment are handled by the backend reader path; there is no browser simulator. See [DEPLOYMENT.md](../../DEPLOYMENT.md) to pass a serial device into the backend container.
+Each teacher brings their own ESP8266/Arduino + MFRC522 reader and connects it from the browser: plug it into the computer running the browser, open the app in Chrome or Edge, and click **Connect reader**. The browser talks to the board over Web Serial and posts card UIDs to the API, which validates them; the server never opens a serial port. See [DEPLOYMENT.md](../../DEPLOYMENT.md) for firmware and deployment notes.
 
 ## Commands
 

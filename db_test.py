@@ -1,13 +1,15 @@
 """
-db_test.py — Database schema tests for the simplified 6-table prototype schema.
+db_test.py — Database schema tests for the current 8-table schema.
 
 Tables covered:
     classes
     students          (rfid_uid nullable + unique on students directly)
     teachers
     subjects
+    timetable_slots
     attendance_sessions
     attendance        (UNIQUE(session_id, student_id) — critical)
+    password_reset_tokens (stores token hashes only)
 
 All tests run against an in-memory database.
 The real attendance.db is never touched.
@@ -701,8 +703,10 @@ EXPECTED_TABLES = {
     "students",
     "teachers",
     "subjects",
+    "timetable_slots",
     "attendance_sessions",
     "attendance",
+    "password_reset_tokens",
 }
 
 
@@ -715,7 +719,7 @@ def test_expected_tables_present():
     assert not extra,   f"Unexpected extra tables: {extra}"
 
 
-_run("Exactly the 6 expected tables exist", test_expected_tables_present)
+_run("Exactly the 8 expected tables exist", test_expected_tables_present)
 
 
 # ---------------------------------------------------------------------------

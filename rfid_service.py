@@ -39,6 +39,9 @@ Rules enforced here:
       also checks first and returns a clear DUPLICATE result.
     - A UID already owned by another student is NEVER silently moved.
 
+The reader itself is opened by the browser (Web Serial); this module only
+receives normalized UID strings and never talks to a serial port.
+
 This module does NOT:
     - Open serial ports.
     - Implement web/HTTP handling.
@@ -52,7 +55,6 @@ from enum import Enum
 from typing import Optional
 
 from database import get_connection
-from rfid_listener import normalize_uid
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +63,17 @@ from rfid_listener import normalize_uid
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def normalize_uid(raw: str) -> str:
+    """
+    Normalize a UID reported by any reader (browser Web Serial, firmware).
+
+      - strip leading/trailing whitespace
+      - remove all internal spaces  ("A9 6E 95 04" -> "A96E9504")
+      - uppercase
+    """
+    return str(raw).strip().replace(" ", "").upper()
 
 
 def _fetch_student_by_id(cur: sqlite3.Cursor,
@@ -187,11 +200,6 @@ class ScanResult:
             parts.append(f"session={self.session_id}")
         parts.append(f"msg={self.message!r}")
         return " | ".join(parts)
-
-
-# Keep the old name as an alias so existing rfid_test.py imports keep working.
-AttendanceStatus = ScanOutcome
-AttendanceScanResult = ScanResult
 
 
 # ---------------------------------------------------------------------------

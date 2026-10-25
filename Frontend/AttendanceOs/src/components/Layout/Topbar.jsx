@@ -25,7 +25,7 @@ function resolveTitle(pathname) {
 export default function Topbar({ onOpenMenu }) {
   const { pathname } = useLocation();
   const user = useCurrentUser();
-  const { isOnline } = useReader();
+  const { connected } = useReader();
   const heading = resolveTitle(pathname);
 
   return (
@@ -47,7 +47,7 @@ export default function Topbar({ onOpenMenu }) {
         <div
           className={cn(
             "hidden items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold sm:flex",
-            isOnline
+            connected
               ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
               : "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300"
           )}
@@ -56,18 +56,18 @@ export default function Topbar({ onOpenMenu }) {
             <span
               className={cn(
                 "absolute inline-flex h-full w-full rounded-full opacity-70",
-                isOnline ? "animate-ping bg-emerald-500" : "bg-rose-500"
+                connected ? "animate-ping bg-emerald-500" : "bg-rose-500"
               )}
             />
-            <span className={cn("relative inline-flex h-2 w-2 rounded-full", isOnline ? "bg-emerald-500" : "bg-rose-500")} />
+            <span className={cn("relative inline-flex h-2 w-2 rounded-full", connected ? "bg-emerald-500" : "bg-rose-500")} />
           </span>
           <Radio className="h-3.5 w-3.5" />
-          {isOnline ? "Reader Online" : "Reader Offline"}
+          {connected ? "Reader connected" : "Reader disconnected"}
         </div>
 
         <ThemeToggle />
 
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-[12px] font-bold text-white">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-600 to-violet-700 text-[12px] font-bold text-white">
           {initials(user?.full_name || "Teacher")}
         </div>
       </div>

@@ -92,7 +92,7 @@ export default function ScanVisual({ state, isOnline, compact = false, label, ca
 
         <p className="mt-6 font-heading text-lg font-bold tracking-tight">{label || LABELS[state] || LABELS.idle}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {caption || (isOnline ? "READER-01 · awaiting card" : "No device detected on USB-HID")}
+          {caption || (isOnline ? "USB reader · awaiting card" : "No reader connected to this computer")}
         </p>
       </div>
     </div>

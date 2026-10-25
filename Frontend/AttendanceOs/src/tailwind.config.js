@@ -24,6 +24,8 @@ export default {
         card: { DEFAULT: "var(--card)", foreground: "var(--card-foreground)" },
         "sidebar-background": "var(--sidebar-background)",
         "sidebar-foreground": "var(--sidebar-foreground)",
+        "sidebar-heading": "var(--sidebar-heading)",
+        "sidebar-muted": "var(--sidebar-muted)",
         "sidebar-primary": "var(--sidebar-primary)",
         "sidebar-primary-foreground": "var(--sidebar-primary-foreground)",
         "sidebar-accent": "var(--sidebar-accent)",

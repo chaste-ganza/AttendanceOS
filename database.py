@@ -25,9 +25,6 @@ import os
 
 DATABASE = os.environ.get("DATABASE_PATH", "attendance.db")
 
-# Valid session states.
-SESSION_STATES = ("SCHEDULED", "OPEN", "CLOSED", "COMPLETED")
-
 
 # ---------------------------------------------------------------------------
 # Connection factory

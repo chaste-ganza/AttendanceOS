@@ -178,7 +178,7 @@ export default function LiveAttendanceTable({ session, students = [], records = 
                       onClick={() => navigate(`/students/${row.student.id}`)}
                       className={cn(
                         "cursor-pointer transition-colors hover:bg-muted/40",
-                        row.key === latestId && "rise-in"
+                        (row.key === latestId || String(row.student?.id) === String(latestId)) && "rise-in"
                       )}
                     >
                       <td className="px-5 py-3 font-mono text-xs font-semibold text-muted-foreground">
@@ -222,7 +222,7 @@ export default function LiveAttendanceTable({ session, students = [], records = 
                   onClick={() => navigate(`/students/${row.student.id}`)}
                   className={cn(
                     "flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40",
-                    row.key === latestId && "rise-in"
+                    (row.key === latestId || String(row.student?.id) === String(latestId)) && "rise-in"
                   )}
                 >
                   <div

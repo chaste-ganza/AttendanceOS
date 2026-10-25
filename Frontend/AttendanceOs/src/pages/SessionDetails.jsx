@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, CalendarDays, Clock, Lock, MapPin, PlayCircle, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,10 +14,11 @@ import RfidScanner from "@/components/rfid/RfidScanner";
 import CloseSessionDialog from "@/components/sessions/CloseSessionDialog";
 import { closeSessionRecord, loadClassroom, openSessionRecord } from "@/lib/classroom";
 import { SESSION_STATUS, formatDate, sessionStats } from "@/lib/attendance-utils";
+import { useReader } from "@/lib/reader-context";
 
 export default function SessionDetail() {
   const { id } = useParams();
-  const queryClient = useQueryClient();
+  const { lastScan } = useReader();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["classroom"],
     queryFn: loadClassroom,
@@ -26,7 +27,7 @@ export default function SessionDetail() {
   const session = data?.sessions.find((item) => item.id === id) || null;
   const records = data?.attendance.filter((item) => item.session_id === id) || [];
   const [closeOpen, setCloseOpen] = useState(false);
-  const [latestId, setLatestId] = useState(null);
+  const latestId = lastScan?.result?.outcome === "SUCCESS" ? lastScan.result.student_id : null;
 
   const handleOpen = async () => {
     await openSessionRecord(session);
@@ -146,18 +147,7 @@ export default function SessionDetail() {
 
       <AttendanceSummary stats={stats} />
 
-      <RfidScanner
-        session={session}
-        students={students}
-        records={records}
-        onRecorded={(record) => {
-          queryClient.setQueryData(["classroom"], (current) =>
-            current ? { ...current, attendance: [...current.attendance, record] } : current
-          );
-          setLatestId(record.id);
-        }}
-        onOpenSession={handleOpen}
-      />
+      <RfidScanner session={session} onOpenSession={handleOpen} />
 
       <LiveAttendanceTable session={session} students={students} records={records} latestId={latestId} />
 

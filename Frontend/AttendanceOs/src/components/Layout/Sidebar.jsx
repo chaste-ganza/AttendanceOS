@@ -63,20 +63,20 @@ export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) 
       />
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col bg-sidebar text-sidebar-foreground transition-all duration-300 ease-out",
+          "fixed inset-y-0 left-0 z-50 flex flex-col bg-sidebar-background text-sidebar-foreground transition-all duration-300 ease-out",
           "border-r border-sidebar-border",
           collapsed ? "w-[86px]" : "w-[272px]",
           open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
         <div className={cn("flex h-16 items-center gap-3 px-5", collapsed && "justify-center px-0")}>
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-900/40">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-700 shadow-lg shadow-indigo-900/40">
             <ScanLine className="h-[18px] w-[18px] text-white" />
           </div>
           {!collapsed && (
             <div className="min-w-0">
-              <p className="truncate font-heading text-[15px] font-bold tracking-tight text-amber-200">AttendanceOS</p>
-              <p className="truncate text-[11px] text-sidebar-foreground/80">RFID Attendance Platform</p>
+              <p className="truncate font-heading text-[15px] font-bold tracking-tight text-sidebar-heading">AttendanceOS</p>
+              <p className="truncate text-[11px] text-sidebar-muted">RFID Attendance Platform</p>
             </div>
           )}
           <button
@@ -90,7 +90,7 @@ export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) 
 
         <nav className={cn("mt-4 flex-1 space-y-1", collapsed ? "px-3" : "px-3")}>
           {!collapsed && (
-            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-foreground/60">
+            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-muted">
               Workspace
             </p>
           )}
@@ -124,13 +124,13 @@ export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) 
               collapsed && "justify-center p-2"
             )}
           >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 text-[13px] font-bold text-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-600 to-violet-700 text-[13px] font-bold text-white">
               {initials(name)}
             </div>
             {!collapsed && (
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-semibold text-amber-200" title={name}>{name}</p>
-                <p className="truncate text-[11px] text-sidebar-foreground/80">Class Teacher</p>
+                <p className="truncate text-[13px] font-semibold text-sidebar-heading" title={name}>{name}</p>
+                <p className="truncate text-[11px] text-sidebar-muted">Class Teacher</p>
               </div>
             )}
           </div>
@@ -141,7 +141,7 @@ export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) 
             aria-label="Log out"
             title={collapsed ? "Log out" : undefined}
             className={cn(
-              "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+              "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring dark:hover:text-rose-300",
               collapsed && "justify-center px-0"
             )}
           >

@@ -2,8 +2,9 @@
 reset_database.py — Wipe all data from the development database.
 
 Targets:        attendance.db  (in the current working directory)
-Tables cleared: attendance, attendance_sessions, students,
-                teachers, subjects, classes
+Tables cleared: attendance, attendance_sessions, timetable_slots,
+                password_reset_tokens, students, teachers,
+                subjects, classes
                 (in FK-safe order — children before parents)
 Schema:         NOT changed.  Tables are emptied, not dropped.
 Seed data:      NONE inserted.  The database is left completely empty.
@@ -13,12 +14,12 @@ Backup:         A timestamped copy is made before any deletion.
 This script does NOT affect:
     - Test databases (tests use in-memory SQLite, not attendance.db)
     - The schema itself (tables remain, just empty)
-    - The attendance.csv archive file
 
 When to run:
     Once, before entering real school data for the first time.
-    After this, add classes / subjects / teachers directly via SQL
-    (or wait for the admin API endpoints to be implemented).
+    After this, create the first class in Settings and register a teacher
+    account through the portal (or use the /api/classes and /api/teachers
+    endpoints directly).
 
 Run with:
     python reset_database.py
@@ -62,9 +63,11 @@ def reset():
     conn.execute("PRAGMA foreign_keys = OFF")
 
     deletion_order = [
-        "attendance",           # references attendance_sessions, students
-        "attendance_sessions",  # references classes, teachers, subjects
-        "students",             # references classes
+        "attendance",            # references attendance_sessions, students
+        "attendance_sessions",   # references classes, teachers, subjects
+        "timetable_slots",       # references classes, subjects, teachers
+        "password_reset_tokens", # references teachers
+        "students",              # references classes
         "teachers",
         "subjects",
         "classes",
@@ -86,20 +89,20 @@ def reset():
     # Summary
     # ---------------------------------------------------------------------------
     print("\n  Database reset complete.")
-    print("  All 6 tables are empty. IDs will start from 1.")
+    print("  All 8 tables are empty. IDs will start from 1.")
     print()
     print("  The schema is intact — no tables were dropped.")
     print("  No seed data was inserted.")
     print()
     print("  Next: add real school data before starting the application.")
-    print("  Until admin API endpoints exist, insert directly via SQL:")
+    print("  Create the first class in Settings, then register a teacher")
+    print("  account in the portal. The same records can be created directly:")
     print()
-    print("    INSERT INTO classes  (name) VALUES ('...');")
-    print("    INSERT INTO subjects (name, code) VALUES ('...', '...');")
-    print("    INSERT INTO teachers (name, username, status, created_at)")
-    print("                 VALUES ('...', '...', 'active', datetime('now'));")
+    print("    POST /api/classes   {\"name\": \"...\"}")
+    print("    POST /api/subjects  {\"name\": \"...\", \"code\": \"...\"}")
+    print("    POST /api/teachers  {\"name\": \"...\", \"username\": \"...\"}")
     print()
-    print("  Then add students and assign RFID cards through the API.")
+    print("  Then add students and assign RFID cards through the portal.")
 
 
 if __name__ == "__main__":

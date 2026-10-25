@@ -23,10 +23,10 @@ What this script does:
   7. Reports a clear migration summary.
 
 What this script does NOT do:
-  - Does not import attendance.csv.
-    The CSV records have no session_id/class context and cannot be
-    safely mapped to the new schema. The file remains as an archive.
-  - Does not delete attendance.csv.
+  - Does not import the legacy attendance.csv export.
+    Its records have no session_id/class context and cannot be safely
+    mapped to the new schema. The export is no longer part of the
+    repository, so this notice is skipped when the file is absent.
   - Does not modify the ESP8266 firmware.
 
 Safety:
@@ -295,8 +295,7 @@ def run_migration():
     1. Run db_test.py to verify the new schema.
     2. Use the application to add classes, subjects, teachers,
        then assign students to classes.
-    3. Do not delete attendance.csv until the school confirms
-       historical data is no longer needed.
+    3. Set a stable FLASK_SECRET_KEY before serving the migrated data.
 """)
 
 

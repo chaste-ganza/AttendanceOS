@@ -43,7 +43,7 @@ function Field({ label, value, mono }) {
   );
 }
 
-export default function ScanResult({ view, result, onManageCard, onOpenSession, onReconnect }) {
+export default function ScanResult({ view, result, onManageCard, onOpenSession, onReconnect, unsupported = false }) {
   const student = result?.student;
 
   return (
@@ -199,24 +199,43 @@ export default function ScanResult({ view, result, onManageCard, onOpenSession, 
             tone="danger"
             icon={<WifiOff className="h-6 w-6" />}
             iconClass="bg-rose-500/15 text-rose-600 dark:text-rose-300"
-            title="RFID Reader Offline"
-            subtitle="No device detected on USB-HID."
+            title={unsupported ? "Browser Cannot Open Readers" : "RFID Reader Not Connected"}
+            subtitle={
+              unsupported
+                ? "This browser does not support Web Serial."
+                : "No reader is connected to this computer."
+            }
           >
             <ul className="space-y-2 text-sm text-muted-foreground">
-              <li className="flex gap-2">
-                <span className="text-rose-500">•</span> Check the USB cable between the reader and this computer.
-              </li>
-              <li className="flex gap-2">
-                <span className="text-rose-500">•</span> Reconnect the reader, then wait for the status light.
-              </li>
-              <li className="flex gap-2">
-                <span className="text-rose-500">•</span> Attendance cannot be recorded until the reader is online.
-              </li>
+              {unsupported ? (
+                <>
+                  <li className="flex gap-2">
+                    <span className="text-rose-500">•</span> Open AttendanceOS in Chrome or Edge on a desktop computer.
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-rose-500">•</span> The reader is opened by the browser, so it cannot be attached to the server.
+                  </li>
+                </>
+              ) : (
+                <>
+                  <li className="flex gap-2">
+                    <span className="text-rose-500">•</span> Plug your USB RFID reader into this computer.
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-rose-500">•</span> Click Connect Reader, then choose the device when the browser asks.
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-rose-500">•</span> Attendance cannot be recorded until a reader is connected.
+                  </li>
+                </>
+              )}
             </ul>
-            <Button variant="outline" className="mt-4 w-full" onClick={onReconnect}>
-              <Radio className="mr-2 h-4 w-4" />
-              Reconnect Reader
-            </Button>
+            {onReconnect && (
+              <Button variant="outline" className="mt-4 w-full" onClick={onReconnect}>
+                <Radio className="mr-2 h-4 w-4" />
+                Connect Reader
+              </Button>
+            )}
           </Shell>
         )}
 

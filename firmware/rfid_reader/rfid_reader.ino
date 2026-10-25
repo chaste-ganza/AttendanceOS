@@ -17,16 +17,19 @@
  *   GREEN_LED         -> D3  (GPIO 0)
  *   CARD_LED          -> D0  (GPIO 16)
  *
- * Serial: 115200 baud
+ * Serial: 115200 baud — USB, plugged into the teacher's own computer.
+ * The web app opens this port directly with the Web Serial API, so the
+ * board must stay attached to the machine running the browser, not to the
+ * server hosting AttendanceOS.
  *
- * Commands received from Python (newline-terminated):
+ * Commands received from the browser (newline-terminated):
  *
  *   ON     -> Enable RFID scanning (normal attendance mode)
  *   OFF    -> Disable RFID scanning
  *   STATUS -> Report current state
  *   ASSIGN -> Scan exactly one card in assignment mode, then return to normal
  *
- * Output sent to Python:
+ * Output sent to the browser:
  *
  *   SYSTEM: ON              (response to ON command)
  *   RFID reader: ACTIVE     (response to ON command, second line)
@@ -44,9 +47,9 @@
  *   MODE_NORMAL - reader active, every card produces UID: output
  *   MODE_ASSIGN - reader waits for exactly one card, then returns to MODE_NORMAL
  *
- * The Python layer differentiates NORMAL vs ASSIGN events by tracking
+ * The browser client differentiates NORMAL vs ASSIGN events by tracking
  * which mode it requested. The firmware sends the same UID: format in
- * both modes so the existing Python UID parsing is unchanged.
+ * both modes so UID parsing is unchanged.
  * The ASSIGN: DONE line signals that assignment mode has ended.
  *
  * Libraries required (install via Arduino Library Manager):
@@ -83,6 +86,11 @@ typedef enum {
 } ReaderMode;
 
 ReaderMode currentMode = MODE_OFF;
+
+// Guard so the boot banner can only ever be printed once, no matter
+// what happens later in loop(). Even a future bug that calls a
+// "print boot message" function again will be a no-op.
+bool bootMessageSent = false;
 
 // Debounce: minimum milliseconds between two card reads.
 // Prevents the same card being read multiple times in one tap.
@@ -123,6 +131,19 @@ void ledCardFlash() {
 }
 
 // ---------------------------------------------------------------------------
+// Boot banner (guaranteed single-shot)
+// ---------------------------------------------------------------------------
+
+void sendBootBannerOnce() {
+    if (bootMessageSent) {
+        return;  // already sent -- never print it again, ever
+    }
+    Serial.println("BOOT: RFID reader ready");
+    Serial.println("BOOT: Waiting for commands");
+    bootMessageSent = true;
+}
+
+// ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
@@ -139,8 +160,7 @@ void setup() {
     // Start in OFF state.
     ledOff();
 
-    Serial.println("BOOT: RFID reader ready");
-    Serial.println("BOOT: Waiting for commands");
+    sendBootBannerOnce();
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +225,9 @@ void handleCommand(String cmd) {
         Serial.print("ERROR: Unknown command: ");
         Serial.println(cmd);
     }
-    // Empty commands are silently ignored.
+    // Empty commands are silently ignored. No output is printed
+    // for idle polling, so the UX stays uniform: one boot banner,
+    // then silence until a real command or card arrives.
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +241,7 @@ void loop() {
         handleCommand(cmd);
     }
 
-    // --- If reader is off, do nothing ---
+    // --- If reader is off, do nothing (silently) ---
     if (currentMode == MODE_OFF) {
         return;
     }
