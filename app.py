@@ -1,23 +1,22 @@
 """
-app.py — Flask teacher portal for the RFID attendance prototype.
+app.py — Flask API for the RFID attendance prototype.
 
 Architecture:
-    One RFIDListener daemon thread reads the serial port.
-    A separate rfid_worker thread pops events from the listener queue,
-    calls the business logic (process_scan), and writes results into the
-    shared rfid_state singleton.
-    Flask routes read from rfid_state and call service functions.
+    The RFID reader is plugged into the teacher's own computer, not the
+    machine running this server. The React app opens it with the Web Serial
+    API, reads card UIDs in the browser and posts each one to POST /api/scan,
+    which runs process_scan() and stores attendance.
+
+    The server therefore never opens a serial port and has no notion of a
+    "connected reader": any teacher can bring their own Arduino and connect
+    it from their browser. Card assignment works the same way — the browser
+    reads the UID and the server only checks (/api/cards/check) and writes
+    (/api/cards/confirm) it.
 
 Startup:
     python app.py
 
-The RFID listener will attempt to connect on startup.
-If the reader is not plugged in, the app still starts and serves the
-portal — the dashboard shows READER OFFLINE and retries are not performed
-automatically (the teacher refreshes or reconnects the device).
-
 Configuration (environment variables or defaults):
-    RFID_PORT     serial port for the RFID reader  (default: COM7)
     FLASK_HOST    host to bind                      (default: 127.0.0.1)
     FLASK_PORT    port to bind                      (default: 5000)
     FLASK_DEBUG   enable debug mode                 (default: 0)
@@ -26,7 +25,6 @@ Configuration (environment variables or defaults):
 import os
 import smtplib
 from email.message import EmailMessage
-import threading
 from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request, session as login_session
@@ -36,9 +34,7 @@ from auth_service      import (
     authenticate_teacher, create_teacher, get_teacher,
     issue_reset_token, reset_teacher_password,
 )
-from rfid_state        import rfid_state
-from rfid_listener     import RFIDListener, EventKind, create_listener
-from rfid_service      import process_scan, ScanOutcome
+from rfid_service      import process_scan
 from session_service   import (
     create_session, open_session, close_session, complete_session,
     get_session, get_open_session, list_sessions, get_session_attendance,
@@ -83,82 +79,6 @@ def require_teacher_session():
         login_session.clear()
         return _err("Authentication required.", 401)
     return None
-
-
-# ---------------------------------------------------------------------------
-# RFID listener lifecycle
-# ---------------------------------------------------------------------------
-
-_listener: RFIDListener = None
-_listener_lock = threading.Lock()
-_worker_thread: threading.Thread = None
-
-
-def _rfid_worker(listener: RFIDListener):
-    """
-    Worker thread: pops events from the listener queue and dispatches them.
-
-    CARD_SCANNED  → process_scan(uid) → rfid_state.set_scan_result()
-    ASSIGN_SCANNED → rfid_state.set_pending_assignment(uid)
-    ERROR         → rfid_state.set_reader_offline() if serial error
-    """
-    for event in listener.events():
-        if event.kind == EventKind.CARD_SCANNED:
-            try:
-                result = process_scan(event.uid)
-                rfid_state.set_scan_result(result.to_dict())
-            except Exception as exc:
-                rfid_state.set_scan_result({
-                    "outcome": "ERROR",
-                    "uid": event.uid,
-                    "message": f"Error processing scan: {exc}",
-                })
-
-        elif event.kind == EventKind.ASSIGN_SCANNED:
-            rfid_state.set_pending_assignment(event.uid)
-
-        elif event.kind == EventKind.ERROR:
-            if "SerialException" in event.message:
-                rfid_state.set_reader_offline()
-
-
-def start_rfid_listener(port: str):
-    """
-    Create the RFIDListener, attempt to connect, start the worker thread.
-    Called once at app startup. Safe to call when hardware is absent —
-    errors are caught and rfid_state is set to offline.
-    """
-    global _listener, _worker_thread
-
-    with _listener_lock:
-        if _listener is not None:
-            return  # already started
-
-        listener = create_listener(port)
-        try:
-            listener.start()
-            rfid_state.set_reader_online(True, port)
-            print(f"[RFID] Listener started on {port}")
-        except Exception as exc:
-            rfid_state.set_reader_offline()
-            print(f"[RFID] Could not connect to {port}: {exc}")
-            print("[RFID] Portal running — reader OFFLINE")
-            # Store the non-started listener so status can report the port.
-            rfid_state.set_reader_online(False)
-            rfid_state._reader_port = port  # record configured port
-            _listener = listener
-            return
-
-        _listener = listener
-
-        worker = threading.Thread(
-            target=_rfid_worker,
-            args=(listener,),
-            name="rfid-worker",
-            daemon=True,
-        )
-        worker.start()
-        _worker_thread = worker
 
 
 # ---------------------------------------------------------------------------
@@ -290,13 +210,12 @@ def api_password_reset_complete():
 @app.route("/")
 def index():
     """
-    Simple JSON status page.
-    The frontend (to be built) will replace this with HTML.
+    Simple JSON status page for the API host.
+    The React SPA is served separately and talks to /api/*.
     """
     open_sess = get_open_session()
     return _ok({
         "app"         : "RFID Attendance Portal",
-        "reader"      : rfid_state.status(),
         "open_session": open_sess.to_dict() if open_sess else None,
     })
 
@@ -310,25 +229,30 @@ def api_dashboard():
     open_sess      = get_open_session()
 
     return _ok({
-        "reader"        : rfid_state.status(),
         "open_session"  : open_sess.to_dict() if open_sess else None,
         "today_sessions": [s.to_dict() for s in today_sessions],
         "timestamp"     : _now_iso(),
     })
 
 
-@app.route("/api/scan-result")
-def api_scan_result():
+@app.route("/api/scan", methods=["POST"])
+def api_record_scan():
     """
-    Return the most recent RFID scan result.
+    Record attendance for a UID read by the browser's own reader.
 
-    The frontend polls this endpoint (or uses SSE — polling is simpler
-    for the prototype).  Pass ?clear=1 to consume and clear the result.
+    The teacher's computer owns the serial connection (Web Serial API), so
+    each card tap arrives here as a plain UID. The same validation as the
+    server-side listener applies: an OPEN session must exist, the card must
+    belong to an active student in that class, and duplicates are rejected.
+
+    Body (JSON):
+        uid  str  required
     """
-    result = rfid_state.get_scan_result()
-    if request.args.get("clear") == "1":
-        rfid_state.clear_scan_result()
-    return _ok(result)
+    body = request.get_json(silent=True) or {}
+    uid = (body.get("uid") or "").strip()
+    if not uid:
+        return _err("uid is required", 400)
+    return _ok(process_scan(uid).to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -773,8 +697,9 @@ def api_check_card():
         uid         str  required  (the scanned UID)
 
     Returns a CardCheckResult describing whether the card is unassigned,
-    already assigned to this student, or owned by another student.
-    The frontend shows this to the teacher before calling /api/cards/assign.
+    already assigned to this student, or owned by another student. The UID
+    comes from the teacher's own reader (Web Serial) and is only written
+    after the browser calls /api/cards/confirm.
     """
     body       = request.get_json(silent=True) or {}
     student_id = body.get("student_id")
@@ -797,93 +722,17 @@ def api_check_card():
     return _ok(result.to_dict(), http_status)
 
 
-@app.route("/api/cards/assign", methods=["POST"])
-def api_assign_card():
-    """
-    Initiate hardware card assignment mode, wait for a card tap, then
-    return the scanned UID so the frontend can show a confirmation prompt.
-
-    This endpoint:
-        1. Sends ASSIGN to the ESP8266 via the listener.
-        2. Waits up to `timeout` seconds for the reader to scan a card.
-        3. Returns the scanned UID.
-
-    The frontend then calls POST /api/cards/confirm to write the assignment.
-
-    Body (JSON):
-        student_id  int    required
-        timeout     float  optional  seconds to wait (default 30)
-
-    If no reader is connected, returns 503.
-    If timeout expires before a card is tapped, returns 408.
-    """
-    body       = request.get_json(silent=True) or {}
-    student_id = body.get("student_id")
-    timeout    = float(body.get("timeout", 30))
-
-    if not student_id:
-        return _err("student_id is required", 400)
-
-    student = get_student(student_id)
-    if student is None:
-        return _err(f"Student {student_id} not found", 404)
-
-    if not rfid_state.reader_online:
-        return _err("RFID reader is offline. Check the USB connection.", 503)
-
-    # Clear any stale pending assignment.
-    rfid_state.pop_pending_assignment()
-    rfid_state.assign_event.clear()
-
-    # Tell the listener to enter ASSIGN mode.
-    global _listener
-    with _listener_lock:
-        if _listener is None:
-            return _err("RFID listener not started", 503)
-        try:
-            _listener.send_command("ASSIGN")
-        except Exception as exc:
-            return _err(f"Could not send ASSIGN command: {exc}", 503)
-
-    # Wait for the worker thread to deposit the scanned UID.
-    got_card = rfid_state.assign_event.wait(timeout=timeout)
-
-    if not got_card:
-        return _ok({
-            "outcome": "TIMEOUT",
-            "message": f"No card scanned within {timeout}s. Try again.",
-            "student": student.to_dict(),
-        }, 408)
-
-    pending = rfid_state.pop_pending_assignment()
-    if pending is None:
-        return _err("Assignment event fired but no UID was captured.", 500)
-
-    uid = pending["uid"]
-
-    # Run phase-1 check so the frontend can show the confirmation screen.
-    check = check_uid_for_assignment(uid, student_id)
-
-    return _ok({
-        "outcome"    : "CARD_SCANNED",
-        "uid"        : uid,
-        "scanned_at" : pending["scanned_at"],
-        "student"    : student.to_dict(),
-        "check"      : check.to_dict(),
-    })
-
-
 @app.route("/api/cards/confirm", methods=["POST"])
 def api_confirm_card():
     """
-    Phase 2 of card assignment: write the assignment to the database.
+    Write the card assignment to the database.
 
-    Must only be called after /api/cards/assign returned a scanned UID
-    and the teacher has reviewed the check result.
+    Called after the browser read a UID from the teacher's reader and the
+    teacher reviewed the /api/cards/check result.
 
     Body (JSON):
         student_id  int  required
-        uid         str  required  (the UID returned by /api/cards/assign)
+        uid         str  required  (the UID read by the browser)
     """
     body       = request.get_json(silent=True) or {}
     student_id = body.get("student_id")
@@ -1659,7 +1508,6 @@ def api_health():
     """Simple health check."""
     return _ok({
         "status" : "ok",
-        "reader" : rfid_state.status(),
         "time"   : _now_iso(),
     })
 
@@ -1688,7 +1536,6 @@ def internal_error(e):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    rfid_port  = os.environ.get("RFID_PORT",  "COM7")
     flask_host = os.environ.get("FLASK_HOST", "127.0.0.1")
     flask_port = int(os.environ.get("FLASK_PORT", "5000"))
     debug      = os.environ.get("FLASK_DEBUG", "0") == "1"
@@ -1696,16 +1543,11 @@ if __name__ == "__main__":
     # Initialise DB schema (safe to call repeatedly — IF NOT EXISTS).
     initialize_database()
 
-    # Start RFID listener before Flask begins serving.
-    start_rfid_listener(rfid_port)
-
     print(f"\nRFID Attendance Portal")
     print(f"  URL  : http://{flask_host}:{flask_port}")
-    print(f"  RFID : {rfid_port}  ({'ONLINE' if rfid_state.reader_online else 'OFFLINE'})")
+    print(f"  RFID : opened by the browser (Web Serial) — no server device required")
     print(f"  Debug: {debug}\n")
 
-    # use_reloader=False prevents the listener thread being started twice
-    # by Werkzeug's reloader process.
     app.run(
         host=flask_host,
         port=flask_port,

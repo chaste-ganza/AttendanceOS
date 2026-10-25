@@ -9,19 +9,52 @@ Covers:
     Sessions  PATCH (editable fields, protected fields, COMPLETED guard)
               DELETE (safe + blocked by attendance + COMPLETED guard)
 
-Requires:
-    python app.py  (running on 127.0.0.1:5000)
+Every /api route requires a signed-in teacher, so this suite registers a
+test account and keeps its session cookie.
 
-Run with:
-    python crud_test.py
+The app must be running on the same database these tests seed:
+
+    DATABASE_PATH=/tmp/attendance-test.db python app.py
+    DATABASE_PATH=/tmp/attendance-test.db python crud_test.py
+
+Environment variables:
+    API_BASE       base URL of the running app (default http://127.0.0.1:5000)
+    DATABASE_PATH  SQLite file used by the app (default attendance.db)
 """
 
+import os
 import sys
 import sqlite3
 from datetime import datetime, timezone
 import requests
 
-BASE = "http://127.0.0.1:5000"
+BASE = os.environ.get("API_BASE", "http://127.0.0.1:5000")
+DB_PATH = os.environ.get("DATABASE_PATH", "attendance.db")
+
+TEST_TEACHER = {
+    "email": "crudtest@example.com",
+    "password": "crud-test-password",
+    "full_name": "CRUD Test Teacher",
+}
+
+# Signed-in client. All helpers below use it.
+http = requests.Session()
+
+
+def authenticate():
+    """Create the test teacher on first run, otherwise log in again."""
+    r = http.post(BASE + "/api/auth/register", json=TEST_TEACHER, timeout=5)
+    if r.status_code == 409:
+        r = http.post(
+            BASE + "/api/auth/login",
+            json={"email": TEST_TEACHER["email"],
+                  "password": TEST_TEACHER["password"]},
+            timeout=5,
+        )
+    if r.status_code not in (200, 201):
+        print(f"\n  FATAL: cannot sign in the test teacher "
+              f"({r.status_code}): {r.text[:200]}")
+        raise SystemExit(1)
 
 # ---------------------------------------------------------------------------
 # Harness
@@ -53,23 +86,23 @@ def section(title):
 
 
 def get(path, params=None):
-    return requests.get(BASE + path, params=params, timeout=5)
+    return http.get(BASE + path, params=params, timeout=5)
 
 
 def post(path, body=None):
-    return requests.post(BASE + path, json=body,
-                         headers={"Content-Type": "application/json"},
-                         timeout=5)
+    return http.post(BASE + path, json=body,
+                     headers={"Content-Type": "application/json"},
+                     timeout=5)
 
 
 def patch(path, body=None):
-    return requests.patch(BASE + path, json=body,
-                          headers={"Content-Type": "application/json"},
-                          timeout=5)
+    return http.patch(BASE + path, json=body,
+                      headers={"Content-Type": "application/json"},
+                      timeout=5)
 
 
 def delete(path):
-    return requests.delete(BASE + path, timeout=5)
+    return http.delete(BASE + path, timeout=5)
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +110,8 @@ def delete(path):
 # ---------------------------------------------------------------------------
 
 def seed():
-    conn = sqlite3.connect("attendance.db")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = OFF")
     # attendance first (FK child of sessions and students)
     conn.execute(
@@ -99,12 +133,22 @@ def seed():
     conn.execute("DELETE FROM teachers WHERE username LIKE 'crud%'")
     conn.execute("DELETE FROM subjects WHERE name  LIKE 'CRUDSubj%'")
     conn.execute("DELETE FROM classes  WHERE name  LIKE 'CRUDCls%'")
+    # Only one session may be OPEN at a time; a session left open by an
+    # earlier run would make every open() below return 409.
+    conn.execute(
+        "UPDATE attendance_sessions "
+        "SET status = 'CLOSED', closed_at = COALESCE(closed_at, ?) "
+        "WHERE status = 'OPEN'",
+        (now,)
+    )
     conn.execute("PRAGMA foreign_keys = ON")
     conn.commit()
     conn.close()
 
 
 seed()
+
+authenticate()
 
 
 # ===========================================================================
@@ -370,7 +414,7 @@ check("Setup: session for attendance test",
 sess_att_id = r_sess_att.json()["session"]["id"]
 
 now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-conn_att = sqlite3.connect("attendance.db")
+conn_att = sqlite3.connect(DB_PATH)
 conn_att.execute(
     "INSERT INTO attendance "
     "(session_id, student_id, attendance_time, status, created_at) "

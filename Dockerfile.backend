@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py auth_service.py database.py rfid_listener.py rfid_service.py rfid_state.py session_service.py card_management_service.py ./
+COPY app.py auth_service.py database.py rfid_service.py session_service.py card_management_service.py ./
 
 EXPOSE 5000
 

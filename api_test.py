@@ -1,19 +1,55 @@
 """
 api_test.py — API endpoint tests for the Flask teacher portal.
 
-Requires the app to be running:
-    python app.py
+Every /api route except /api/health requires a signed-in teacher, so this
+suite registers a test account and keeps its session cookie.
 
-Run tests:
-    python api_test.py
+The app must be running on the same database these tests seed. Point both
+at the same file:
+
+    DATABASE_PATH=/tmp/attendance-test.db python app.py
+    DATABASE_PATH=/tmp/attendance-test.db python api_test.py
+
+Environment variables:
+    API_BASE       base URL of the running app (default http://127.0.0.1:5000)
+    DATABASE_PATH  SQLite file used by the app (default attendance.db)
+    SMTP_HOST      when unset, the password-reset endpoint must report 503
 """
 
+import os
 import sys
 import sqlite3
 from datetime import datetime, timezone
 import requests
 
-BASE = "http://127.0.0.1:5000"
+BASE = os.environ.get("API_BASE", "http://127.0.0.1:5000")
+DB_PATH = os.environ.get("DATABASE_PATH", "attendance.db")
+
+TEST_TEACHER = {
+    "email": "apitest@example.com",
+    "password": "api-test-password",
+    "full_name": "API Test Teacher",
+}
+
+# Signed-in client. All helpers below use it.
+http = requests.Session()
+
+
+def authenticate():
+    """Create the test teacher on first run, otherwise log in again."""
+    r = http.post(BASE + "/api/auth/register", json=TEST_TEACHER, timeout=5)
+    if r.status_code == 409:
+        r = http.post(
+            BASE + "/api/auth/login",
+            json={"email": TEST_TEACHER["email"],
+                  "password": TEST_TEACHER["password"]},
+            timeout=5,
+        )
+    if r.status_code not in (200, 201):
+        print(f"\n  FATAL: cannot sign in the test teacher "
+              f"({r.status_code}): {r.text[:200]}")
+        raise SystemExit(1)
+
 
 # ---------------------------------------------------------------------------
 # Harness
@@ -45,19 +81,19 @@ def section(title):
 
 
 def get(path, params=None):
-    return requests.get(BASE + path, params=params, timeout=5)
+    return http.get(BASE + path, params=params, timeout=5)
 
 
 def post(path, body=None):
-    return requests.post(BASE + path, json=body,
-                         headers={"Content-Type": "application/json"},
-                         timeout=5)
+    return http.post(BASE + path, json=body,
+                     headers={"Content-Type": "application/json"},
+                     timeout=5)
 
 
 def patch(path, body=None):
-    return requests.patch(BASE + path, json=body,
-                          headers={"Content-Type": "application/json"},
-                          timeout=5)
+    return http.patch(BASE + path, json=body,
+                      headers={"Content-Type": "application/json"},
+                      timeout=5)
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +102,7 @@ def patch(path, body=None):
 
 def seed():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    conn = sqlite3.connect("attendance.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("INSERT OR IGNORE INTO classes  (id, name) VALUES (1, 'Y1B')")
     conn.execute("INSERT OR IGNORE INTO classes  (id, name) VALUES (2, 'Y2A')")
@@ -93,11 +129,88 @@ def seed():
         "DELETE FROM students WHERE registration_number LIKE 'APITEST%' "
         "OR registration_number LIKE 'CARDTEST%'"
     )
+    # Only one session may be OPEN at a time, so a session left open by an
+    # earlier run would make every open() below return 409.
+    conn.execute(
+        "UPDATE attendance_sessions "
+        "SET status = 'CLOSED', closed_at = COALESCE(closed_at, ?) "
+        "WHERE status = 'OPEN'",
+        (now,)
+    )
     conn.commit()
     conn.close()
 
 
 seed()
+
+authenticate()
+
+
+# ===========================================================================
+# SECTION 0 — Authentication
+# ===========================================================================
+
+section("0. AUTHENTICATION")
+
+# Unauthenticated callers get 401 for protected routes, health stays public.
+r = requests.get(BASE + "/api/students", timeout=5)
+check("GET /api/students  without a session -> 401",
+      r.status_code == 401, f"got {r.status_code}")
+
+r = requests.get(BASE + "/api/health", timeout=5)
+check("GET /api/health  is public -> 200",
+      r.status_code == 200, f"got {r.status_code}")
+
+r = get("/api/auth/me")
+check("GET /api/auth/me  returns 200", r.status_code == 200)
+check("GET /api/auth/me  email matches the test teacher",
+      r.json().get("user", {}).get("email") == TEST_TEACHER["email"],
+      f"got {r.json().get('user')}")
+
+# The same address cannot register twice.
+r = post("/api/auth/register", TEST_TEACHER)
+check("POST /api/auth/register  duplicate email -> 409",
+      r.status_code == 409, f"got {r.status_code}")
+
+# Wrong password and unknown account must be indistinguishable.
+r = http.post(BASE + "/api/auth/login",
+              json={"email": TEST_TEACHER["email"],
+                    "password": "wrong-password"}, timeout=5)
+check("POST /api/auth/login  wrong password -> 401",
+      r.status_code == 401, f"got {r.status_code}")
+
+r = http.post(BASE + "/api/auth/login",
+              json={"email": "nobody@example.com",
+                    "password": "irrelevant"}, timeout=5)
+check("POST /api/auth/login  unknown account -> 401",
+      r.status_code == 401, f"got {r.status_code}")
+
+# Logout must invalidate the session.
+r = post("/api/auth/logout")
+check("POST /api/auth/logout  returns 200", r.status_code == 200)
+r = get("/api/auth/me")
+check("GET /api/auth/me  after logout -> 401",
+      r.status_code == 401, f"got {r.status_code}")
+
+authenticate()
+
+# Password reset: bad tokens are rejected and mail must be configured.
+r = post("/api/auth/password-reset/complete",
+         {"reset_token": "not-a-real-token", "new_password": "new-password-1"})
+check("POST /api/auth/password-reset/complete  invalid token -> 400",
+      r.status_code == 400, f"got {r.status_code}")
+
+r = post("/api/auth/password-reset/complete",
+         {"new_password": "new-password-1"})
+check("POST /api/auth/password-reset/complete  missing token -> 400",
+      r.status_code == 400, f"got {r.status_code}")
+
+if os.environ.get("SMTP_HOST"):
+    print("  SKIP  POST /api/auth/password-reset (SMTP is configured)")
+else:
+    r = post("/api/auth/password-reset", {"email": TEST_TEACHER["email"]})
+    check("POST /api/auth/password-reset  without SMTP -> 503",
+          r.status_code == 503, f"got {r.status_code}")
 
 
 # ===========================================================================
@@ -110,26 +223,22 @@ r = get("/")
 check("GET /  returns 200", r.status_code == 200,
       f"got {r.status_code}: {r.text[:100]}")
 check("GET /  has 'app' key",    "app"    in r.json())
-check("GET /  has 'reader' key", "reader" in r.json())
 
 r = get("/api/health")
 check("GET /api/health  returns 200",  r.status_code == 200)
 check("GET /api/health  status = ok",  r.json().get("status") == "ok")
-check("GET /api/health  has reader",   "reader" in r.json())
 
 r = get("/api/dashboard")
 check("GET /api/dashboard  returns 200",        r.status_code == 200)
-check("GET /api/dashboard  has reader",         "reader"         in r.json())
 check("GET /api/dashboard  has today_sessions", "today_sessions" in r.json())
 check("GET /api/dashboard  has open_session",   "open_session"   in r.json())
 check("GET /api/dashboard  has timestamp",      "timestamp"      in r.json())
 
-r = get("/api/scan-result")
-check("GET /api/scan-result  returns 200",  r.status_code == 200)
-check("GET /api/scan-result  has outcome",  "outcome" in r.json())
-
-r = get("/api/scan-result", params={"clear": "1"})
-check("GET /api/scan-result?clear=1  returns 200", r.status_code == 200)
+# The browser owns the reader, so the only server-side scan entry point is
+# a plain UID body. Rejecting an empty one proves the route is wired up.
+r = post("/api/scan", {})
+check("POST /api/scan  rejects missing uid", r.status_code == 400,
+      f"got {r.status_code}: {r.text[:100]}")
 
 
 # ===========================================================================
@@ -501,11 +610,6 @@ r = post("/api/cards/cancel")
 check("POST /api/cards/cancel  returns 200", r.status_code == 200)
 check("POST /api/cards/cancel  outcome = CANCELLED",
       r.json().get("outcome") == "CANCELLED")
-
-# POST /api/cards/assign — reader offline (expected 503)
-r = post("/api/cards/assign", {"student_id": no_card_student_id})
-check("POST /api/cards/assign  reader offline -> 503",
-      r.status_code == 503, f"got {r.status_code}: {r.text[:200]}")
 
 # POST /api/cards/unassign
 r = post("/api/cards/unassign", {"student_id": no_card_student_id})

@@ -1,29 +1,60 @@
 """
-hardware_test.py — Real hardware readiness check.
+hardware_test.py — Backend readiness check.
 
-Tests items 1-15 of the backend readiness checklist against the
-live Flask app (http://127.0.0.1:5000) and the physical ESP8266
-+ RC522 RFID reader on COM7.
+Tests items 1-15 of the readiness checklist against the live Flask app. The
+physical ESP8266 + RC522 reader is owned by the browser (Web Serial), so
+nothing here touches a serial port and every item runs in software.
 
-Items 1-3, 5-11, 15 are tested via the API (software-only, no tap needed).
-Items 4, 12-14 require a physical card tap and will prompt you.
+Every /api route requires a signed-in teacher, so this script registers a
+test account and keeps its session cookie.
 
-Usage:
-    1. Start the app:    python app.py
-    2. Plug in the ESP8266 on COM7
-    3. Run:              python hardware_test.py
+The app must run on the same database this script seeds:
 
-If you press Ctrl+C at any hardware-tap prompt the test is skipped
-and marked NOT_TESTED.
+    DATABASE_PATH=/tmp/attendance-test.db python app.py
+    DATABASE_PATH=/tmp/attendance-test.db python hardware_test.py
+
+Environment variables:
+    API_BASE       base URL of the running app (default http://127.0.0.1:5000)
+    DATABASE_PATH  SQLite file used by the app (default attendance.db)
+
+This script only exercises the API. The RFID reader itself is opened by the
+browser (Web Serial) on the teacher's computer, so there is no serial device
+to probe from here: card taps are sent as POST /api/scan with a UID body.
 """
 
+import os
 import sys
 import sqlite3
-import time
 import requests
 from datetime import datetime, timezone
 
-BASE = "http://127.0.0.1:5000"
+BASE = os.environ.get("API_BASE", "http://127.0.0.1:5000")
+DB_PATH = os.environ.get("DATABASE_PATH", "attendance.db")
+
+TEST_TEACHER = {
+    "email": "hardwaretest@example.com",
+    "password": "hardware-test-password",
+    "full_name": "Hardware Test Teacher",
+}
+
+# Signed-in client. All helpers below use it.
+http = requests.Session()
+
+
+def authenticate():
+    """Create the test teacher on first run, otherwise log in again."""
+    r = http.post(BASE + "/api/auth/register", json=TEST_TEACHER, timeout=5)
+    if r.status_code == 409:
+        r = http.post(
+            BASE + "/api/auth/login",
+            json={"email": TEST_TEACHER["email"],
+                  "password": TEST_TEACHER["password"]},
+            timeout=5,
+        )
+    if r.status_code not in (200, 201):
+        print(f"\n  FATAL: cannot sign in the test teacher "
+              f"({r.status_code}): {r.text[:200]}")
+        raise SystemExit(1)
 
 # ---------------------------------------------------------------------------
 # Harness
@@ -41,25 +72,13 @@ def report(item_num, label, status, detail=""):
 
 
 def get(path, params=None):
-    return requests.get(BASE + path, params=params, timeout=10)
+    return http.get(BASE + path, params=params, timeout=10)
 
 
 def post(path, body=None):
-    return requests.post(BASE + path, json=body,
-                         headers={"Content-Type": "application/json"},
-                         timeout=10)
-
-
-def prompt_tap(message):
-    """Prompt for a card tap. Returns True if user proceeds, False on skip."""
-    print(f"\n  >>> {message}")
-    print("      Press Enter when done, or type 's' to skip: ", end="", flush=True)
-    try:
-        ans = input().strip().lower()
-        return ans != "s"
-    except (KeyboardInterrupt, EOFError):
-        print()
-        return False
+    return http.post(BASE + path, json=body,
+                     headers={"Content-Type": "application/json"},
+                     timeout=10)
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +87,7 @@ def prompt_tap(message):
 
 def seed():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    conn = sqlite3.connect("attendance.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("INSERT OR IGNORE INTO classes  (id, name) VALUES (1, 'Y1B')")
     conn.execute("INSERT OR IGNORE INTO classes  (id, name) VALUES (2, 'Y2A')")
@@ -91,14 +110,26 @@ def seed():
     # Order matters: attendance → sessions → students (FK chain).
     conn.execute(
         "DELETE FROM attendance WHERE session_id IN "
-        "(SELECT id FROM attendance_sessions WHERE session_date = '2026-11-10')"
+        "(SELECT id FROM attendance_sessions "
+        " WHERE session_date IN ('2026-11-10','2026-11-11'))"
     )
-    conn.execute("DELETE FROM attendance_sessions WHERE session_date = '2026-11-10'")
+    conn.execute(
+        "DELETE FROM attendance_sessions "
+        "WHERE session_date IN ('2026-11-10','2026-11-11')"
+    )
     conn.execute(
         "DELETE FROM attendance WHERE student_id IN "
         "(SELECT id FROM students WHERE registration_number LIKE 'HW%')"
     )
     conn.execute("DELETE FROM students WHERE registration_number LIKE 'HW%'")
+    # Only one session may be OPEN at a time; a session left open by an
+    # earlier run would make every open() below return 409.
+    conn.execute(
+        "UPDATE attendance_sessions "
+        "SET status = 'CLOSED', closed_at = COALESCE(closed_at, ?) "
+        "WHERE status = 'OPEN'",
+        (now,)
+    )
     conn.commit()
     conn.close()
 
@@ -121,10 +152,10 @@ except requests.exceptions.ConnectionError:
     sys.exit(1)
 
 print(f"\n  Flask: OK  ({BASE})")
-reader_online = r.json().get("reader", {}).get("reader_online", False)
-print(f"  RFID reader: {'ONLINE' if reader_online else 'OFFLINE (COM7 not connected)'}")
+print("  RFID reader: opened by the browser (Web Serial) — not checked here")
 
 seed()
+authenticate()
 print("  Test data seeded.\n")
 
 
@@ -155,6 +186,16 @@ r2 = post("/api/students", {
     "registration_number": "HW002", "class_id": 2,
 })
 wrong_class_student_id = r2.json().get("student", {}).get("id") if r2.status_code == 201 else None
+
+# Third student in class Y1B with a known card, so the scan checks below
+# never depend on students left over from an older database.
+r3 = post("/api/students", {
+    "first_name": "Hardware", "last_name": "Scanned",
+    "registration_number": "HW003", "class_id": 1,
+    "rfid_uid": "HWUID001",
+})
+if r3.status_code != 201:
+    print(f"\n  WARNING: could not create the card-holder student: {r3.text[:120]}")
 
 
 # ---------------------------------------------------------------------------
@@ -203,37 +244,17 @@ print("=" * 60)
 
 real_uid = None
 
-if not reader_online:
-    report(4, "Receive a real RFID UID from the ESP8266", "NOT_TESTED",
-           "Reader is OFFLINE. Plug in the ESP8266 and restart the app.")
+# ITEM 4 — the browser reads the card and posts the UID. Exercise that route
+# with a UID that cannot belong to a student, which must be reported back as a
+# validated scan result rather than crashing.
+r = post("/api/scan", {"uid": "NOTAREALCARD"})
+scan_body = r.json() if r.status_code == 200 else {}
+if r.status_code == 200 and scan_body.get("outcome"):
+    report(4, "Accept a UID posted by the browser reader", "PASS",
+           f"POST /api/scan -> {scan_body.get('outcome')}")
 else:
-    # Clear any previous scan result
-    get("/api/scan-result", params={"clear": "1"})
-
-    tapped = prompt_tap(
-        "ITEM 4: Tap ANY RFID card on the reader to test hardware UID delivery."
-    )
-    if not tapped:
-        report(4, "Receive a real RFID UID from the ESP8266", "NOT_TESTED",
-               "Skipped by user.")
-    else:
-        # Poll /api/scan-result for up to 10 seconds
-        uid_received = False
-        for _ in range(20):
-            time.sleep(0.5)
-            r = get("/api/scan-result")
-            outcome = r.json().get("outcome", "IDLE")
-            if outcome != "IDLE":
-                real_uid = r.json().get("uid")
-                uid_received = True
-                break
-
-        if uid_received and real_uid:
-            report(4, "Receive a real RFID UID from the ESP8266",
-                   "PASS", f"Received UID: {real_uid}")
-        else:
-            report(4, "Receive a real RFID UID from the ESP8266",
-                   "FAIL", "No UID received within 10s. Check firmware/wiring.")
+    report(4, "Accept a UID posted by the browser reader", "FAIL",
+           f"status={r.status_code} body={r.text[:120]}")
 
 
 # ---------------------------------------------------------------------------
@@ -523,26 +544,6 @@ else:
     report(14, "Reassign card only after explicit confirmation",
            "FAIL", "Wrong-class student not available.")
 
-# Hardware assign mode (item 12 in hardware sense)
-if reader_online:
-    print()
-    tapped = prompt_tap(
-        "OPTIONAL HARDWARE: Tap a NEW (unassigned) card to test hardware "
-        "ASSIGN mode delivery to /api/scan-result."
-    )
-    if tapped:
-        get("/api/scan-result", params={"clear": "1"})
-        # The listener is in NORMAL mode — a tap will produce CARD_SCANNED.
-        # We can't easily trigger ASSIGN mode from here without the full
-        # browser flow, so we just verify the UID arrives.
-        for _ in range(20):
-            time.sleep(0.5)
-            r = get("/api/scan-result")
-            if r.json().get("outcome") not in ("IDLE", None):
-                hw_uid = r.json().get("uid", "")
-                print(f"    Hardware tap received UID: {hw_uid}")
-                break
-
 
 # ---------------------------------------------------------------------------
 # ITEM 15 — Return appropriate JSON/API results
@@ -555,11 +556,11 @@ print("=" * 60)
 # Verify every outcome type returns valid JSON with the required fields.
 checks_15 = []
 
-# scan-result (IDLE state)
-r = get("/api/scan-result", params={"clear": "1"})
+# scan endpoint rejects a UID-less body with a JSON error
+r = post("/api/scan", {})
 checks_15.append(
-    r.status_code == 200
-    and "outcome" in r.json()
+    r.status_code == 400
+    and "error" in r.json()
 )
 
 # session with attendance

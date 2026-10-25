@@ -36,15 +36,13 @@ from enum import Enum
 from typing import Optional
 
 from database import get_connection
-from rfid_listener import normalize_uid
 from rfid_service import (
+    normalize_uid,
     find_student_by_uid,
     find_student_by_id,
     assign_card,
     reassign_card,
-    unassign_card,
     LookupStatus,
-    AssignmentOutcome,
     AssignmentResult,
 )
 
